@@ -24,7 +24,7 @@
 
 ### 下载
 
-前往 [Releases](https://github.com/your-username/md-viewer/releases) 页面下载最新版本。
+前往 [Releases](https://github.com/qizhenghai2020/md-viewer/releases) 页面下载最新版本。
 
 ### 从源码构建
 
@@ -37,7 +37,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-username/md-viewer.git
+git clone https://github.com/qizhenghai2020/md-viewer.git
 cd md-viewer
 
 # 安装依赖
