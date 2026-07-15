@@ -1,0 +1,25 @@
+/* 全局样式重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+}
+
+/* 选中文本颜色 */
+::selection {
+  background: rgba(9, 105, 218, 0.3);
+}
+
+/* 暗色主题选中文本 */
+[data-theme="dark"] ::selection {
+  background: rgba(88, 166, 255, 0.3);
+}

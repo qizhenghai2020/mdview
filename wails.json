@@ -1,0 +1,34 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "mdviewer",
+  "outputfilename": "md查看器",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "杞正海",
+    "email": "522681219@qq.com"
+  },
+  "info": {
+    "companyName": "杞正海",
+    "productName": "MD查看器",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2025 杞正海",
+    "comments": "轻量级 Markdown 文档查看器",
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "MarkdownFile",
+        "description": "Markdown 文档",
+        "iconName": "icon"
+      },
+      {
+        "ext": "markdown",
+        "name": "MarkdownFile",
+        "description": "Markdown 文档",
+        "iconName": "icon"
+      }
+    ]
+  }
+}
