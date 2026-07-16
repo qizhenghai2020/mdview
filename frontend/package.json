@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@do-md/core-react": "^0.2.14",
     "@fontpkg/alibaba-pu-hui-ti-3-0": "^3.1.2",
     "@fontpkg/alimama-fang-yuan-ti-vf": "^1.0.5",
     "@fontpkg/alimama-shu-hei-ti": "^1.0.5",
@@ -18,10 +19,15 @@
     "@fontsource/zcool-kuaile": "^5.2.8",
     "@fontsource/zcool-qingke-huangyou": "^5.2.8",
     "@fontsource/zcool-xiaowei": "^5.2.8",
+    "@vitejs/plugin-react": "^5.2.0",
     "github-markdown-css": "^5.9.0",
     "highlight.js": "^11.11.1",
+    "immer": "^11.1.11",
     "marked": "^18.0.6",
     "mermaid": "^11.16.0",
+    "prismjs": "^1.30.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "vue": "^3.5.0"
   },
   "devDependencies": {

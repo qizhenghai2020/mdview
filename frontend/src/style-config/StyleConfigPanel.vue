@@ -172,9 +172,7 @@ function getColorInputValue(color) {
 <template>
   <aside class="style-config-panel">
     <div class="panel-header">
-      <div>
-        <h2>样式配置</h2>
-      </div>
+      <h2>样式配置</h2>
       <div class="panel-actions">
         <button
           v-if="showReset"
@@ -198,7 +196,9 @@ function getColorInputValue(color) {
           <span>{{ panelState.sections.theme ? "▾" : "▸" }}</span>
         </button>
         <div v-if="panelState.sections.theme" class="section-body">
-          <div style="display: flex; align-items: center; gap: 40px; margin:0px 0 15px 0">
+          <div
+            style="display: flex; align-items: center; gap: 40px; margin: 0px 0 15px 0"
+          >
             <label class="field-label" style="margin-bottom: 0">主题</label>
             <select
               class="app-select"
@@ -505,9 +505,10 @@ function getColorInputValue(color) {
 
 .panel-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 16px 14px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-toolbar);
 }
@@ -571,7 +572,7 @@ function getColorInputValue(color) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   border: none;
   background: var(--btn-hover);
   color: var(--text-primary);

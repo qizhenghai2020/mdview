@@ -4,6 +4,7 @@ import { marked } from "marked";
 import hljs from "highlight.js";
 import mermaid from "mermaid";
 import StyleConfigPanel from "./style-config/StyleConfigPanel.vue";
+import LiveEditSurface from "./live-edit/LiveEditSurface.vue";
 import { useStyleConfigPlugin } from "./style-config/useStyleConfigPlugin";
 
 // 检测是否在 Wails 环境中运行
@@ -15,9 +16,7 @@ let OpenFileDialogFunc,
   GetFileNameFunc,
   GetFilePathFunc,
   ResolveImagePathFunc,
-  ReadImageAsBase64Func;
-let RegisterFileAssociationFunc,
-  IsFileAssociationSetFunc,
+  ReadImageAsBase64Func,
   GetStartupFileFunc,
   ReadFileAndUpdateWatchFunc,
   WriteFileFunc;
@@ -31,8 +30,6 @@ if (isWailsEnv) {
     GetFilePathFunc = window.go.main.App.GetFilePath;
     ResolveImagePathFunc = window.go.main.App.ResolveImagePath;
     ReadImageAsBase64Func = window.go.main.App.ReadImageAsBase64;
-    RegisterFileAssociationFunc = window.go.main.App.RegisterFileAssociation;
-    IsFileAssociationSetFunc = window.go.main.App.IsFileAssociationSet;
     GetStartupFileFunc = window.go.main.App.GetStartupFile;
     ReadFileAndUpdateWatchFunc = window.go.main.App.ReadFileAndUpdateWatch;
     WriteFileFunc = window.go.main.App.WriteFile;
@@ -63,12 +60,6 @@ function ResolveImagePath(src) {
 function ReadImageAsBase64(path) {
   if (ReadImageAsBase64Func) return ReadImageAsBase64Func(path);
 }
-function RegisterFileAssociation() {
-  if (RegisterFileAssociationFunc) return RegisterFileAssociationFunc();
-}
-function IsFileAssociationSet() {
-  if (IsFileAssociationSetFunc) return IsFileAssociationSetFunc();
-}
 function GetStartupFile() {
   if (GetStartupFileFunc) return GetStartupFileFunc();
 }
@@ -91,12 +82,12 @@ const tocItems = ref([]);
 const activeTocId = ref("");
 const isDragging = ref(false);
 const zoomLevel = ref(100);
-const isAssociated = ref(false);
-const isAssociating = ref(false); // 关联按钮loading状态
 const currentTheme = ref("elegant");
-const viewMode = ref("preview"); // 只有两个值: 'preview' 和 'split'
+const viewMode = ref("preview"); // 'preview' | 'split' | 'live'
 const editorRef = ref(null);
 const previewRef = ref(null);
+const liveEditorRef = ref(null);
+const splitContainerRef = ref(null);
 const mermaidIdCounter = ref(0);
 const isExternalChange = ref(false);
 const isSaving = ref(false); // 保存中状态
@@ -105,12 +96,26 @@ const historyIndex = ref(-1); // 当前历史位置
 const MAX_HISTORY = 50; // 最大历史记录数
 const isLoading = ref(false); // 文档加载状态
 const loadingText = ref("加载中..."); // 加载提示文字
+const LIVE_EDIT_PLACEHOLDER = "在此实时编辑 Markdown 内容...";
+const VIEW_MODE_TABS = [
+  { mode: "preview", label: "预览", title: "切换到预览模式" },
+  { mode: "live", label: "编辑", title: "切换到可视化编辑模式" },
+  { mode: "split", label: "分栏", title: "切换到分栏编辑模式" },
+];
 
 // 目录宽度相关
 const tocWidth = ref(parseInt(localStorage.getItem("tocWidth")) || 240);
 const isResizingToc = ref(false);
 const tocMinWidth = 120;
 const tocMaxWidth = 500;
+const SPLIT_WIDTH_STORAGE_KEY = "md-viewer.split-editor-width";
+const splitMinPercent = 20;
+const splitMaxPercent = 80;
+const splitEditorWidth = ref(readStoredSplitEditorWidth());
+const isResizingSplit = ref(false);
+const splitContainerStyle = computed(() => ({
+  "--split-editor-width": `${splitEditorWidth.value}%`,
+}));
 
 const {
   styleConfig,
@@ -278,7 +283,10 @@ function enhanceTaskListHtml(html) {
   }
 
   const parser = new DOMParser();
-  const doc = parser.parseFromString(`<div class="markdown-root">${html}</div>`, "text/html");
+  const doc = parser.parseFromString(
+    `<div class="markdown-root">${html}</div>`,
+    "text/html"
+  );
   const root = doc.body.firstElementChild;
 
   if (!root) {
@@ -316,7 +324,9 @@ function enhanceTaskListHtml(html) {
     const content = doc.createElement("div");
     content.className = "task-list-content";
 
-    const nodesToMove = Array.from(item.childNodes).filter((node) => node !== directCheckbox);
+    const nodesToMove = Array.from(item.childNodes).filter(
+      (node) => node !== directCheckbox
+    );
     nodesToMove.forEach((node) => {
       content.appendChild(node);
     });
@@ -520,77 +530,108 @@ function resetPluginStyles() {
   showToast("样式配置已恢复为主题默认值", "success");
 }
 
-// 视图模式切换 - 只有两种模式：预览和分屏编辑
+// 视图模式切换 - 保留原分屏编辑，新增单栏实时编辑
 let savedScrollRatio = 0; // 保存滚动比例
 
-function toggleViewMode() {
-  if (viewMode.value === "preview") {
-    // 保存当前预览区的滚动比例
-    const contentArea = document.querySelector(".content-area");
-    if (contentArea) {
-      const maxScroll = contentArea.scrollHeight - contentArea.clientHeight;
-      if (maxScroll > 0) {
-        savedScrollRatio = contentArea.scrollTop / maxScroll;
-      }
+function getScrollRatio(element) {
+  if (!element) {
+    return 0;
+  }
+
+  const maxScroll = element.scrollHeight - element.clientHeight;
+  if (maxScroll <= 0) {
+    return 0;
+  }
+
+  return element.scrollTop / maxScroll;
+}
+
+function applyScrollRatio(element, ratio) {
+  if (!element) {
+    return;
+  }
+
+  const maxScroll = element.scrollHeight - element.clientHeight;
+  if (maxScroll <= 0) {
+    return;
+  }
+
+  element.scrollTop = ratio * maxScroll;
+}
+
+function readCurrentScrollRatio(mode = viewMode.value) {
+  if (mode === "split") {
+    const ratios = [getScrollRatio(editorRef.value), getScrollRatio(previewRef.value)];
+    return ratios.reduce((sum, value) => sum + value, 0) / ratios.length;
+  }
+
+  if (mode === "live") {
+    return getScrollRatio(liveEditorRef.value);
+  }
+
+  return getScrollRatio(document.querySelector(".content-area"));
+}
+
+function restoreScrollRatioForMode(mode) {
+  nextTick(() => {
+    if (mode === "split") {
+      applyScrollRatio(editorRef.value, savedScrollRatio);
+      applyScrollRatio(previewRef.value, savedScrollRatio);
+      return;
     }
 
-    // 切换到分屏编辑模式
-    viewMode.value = "split";
-    editedContent.value = markdownContent.value;
-    lastEditedContent = markdownContent.value;
-    // 初始化历史记录
-    if (
-      editHistory.value.length === 0 ||
-      editHistory.value[editHistory.value.length - 1] !== editedContent.value
-    ) {
-      editHistory.value = [editedContent.value];
-      historyIndex.value = 0;
+    if (mode === "live") {
+      applyScrollRatio(liveEditorRef.value, savedScrollRatio);
+      return;
     }
 
-    // 恢复滚动位置
-    nextTick(() => {
-      const editor = editorRef.value;
-      const preview = previewRef.value;
-      if (editor) {
-        const editorMaxScroll = editor.scrollHeight - editor.clientHeight;
-        if (editorMaxScroll > 0) {
-          editor.scrollTop = savedScrollRatio * editorMaxScroll;
-        }
-      }
-      if (preview) {
-        const previewMaxScroll = preview.scrollHeight - preview.clientHeight;
-        if (previewMaxScroll > 0) {
-          preview.scrollTop = savedScrollRatio * previewMaxScroll;
-        }
-      }
-    });
-  } else {
-    // 保存当前编辑区的滚动比例
-    const editor = editorRef.value;
-    const preview = previewRef.value;
-    if (editor && preview) {
-      const editorMaxScroll = editor.scrollHeight - editor.clientHeight;
-      const previewMaxScroll = preview.scrollHeight - preview.clientHeight;
-      // 取两者的平均值作为保存的滚动比例
-      if (editorMaxScroll > 0 && previewMaxScroll > 0) {
-        savedScrollRatio =
-          (editor.scrollTop / editorMaxScroll + preview.scrollTop / previewMaxScroll) / 2;
-      }
-    }
+    applyScrollRatio(document.querySelector(".content-area"), savedScrollRatio);
+  });
+}
 
-    // 切换到预览模式
+function prepareEditingBuffer(sourceContent = markdownContent.value) {
+  editedContent.value = sourceContent;
+  lastEditedContent = sourceContent;
+
+  if (
+    editHistory.value.length === 0 ||
+    editHistory.value[editHistory.value.length - 1] !== sourceContent
+  ) {
+    editHistory.value = [sourceContent];
+    historyIndex.value = 0;
+  }
+}
+
+function toggleEditorMode(targetMode) {
+  savedScrollRatio = readCurrentScrollRatio();
+
+  if (viewMode.value === targetMode) {
     viewMode.value = "preview";
+    restoreScrollRatioForMode("preview");
+    return;
+  }
 
-    // 恢复滚动位置
-    nextTick(() => {
-      const contentArea = document.querySelector(".content-area");
-      if (contentArea) {
-        const maxScroll = contentArea.scrollHeight - contentArea.clientHeight;
-        if (maxScroll > 0) {
-          contentArea.scrollTop = savedScrollRatio * maxScroll;
-        }
-      }
-    });
+  if (viewMode.value === "preview") {
+    prepareEditingBuffer(markdownContent.value);
+  } else if (targetMode === "split" && viewMode.value === "live") {
+    prepareEditingBuffer(editedContent.value);
+  }
+
+  viewMode.value = targetMode;
+  restoreScrollRatioForMode(targetMode);
+}
+
+function switchViewMode(targetMode) {
+  if (viewMode.value === targetMode) {
+    return;
+  }
+
+  toggleEditorMode(targetMode);
+}
+
+function handleLiveEditorReady() {
+  if (viewMode.value === "live") {
+    restoreScrollRatioForMode("live");
   }
 }
 
@@ -703,37 +744,6 @@ function applyZoom() {
   );
 }
 
-// 关联文件
-async function associateFile() {
-  if (!isWailsEnv || !RegisterFileAssociation) {
-    showToast("请在桌面应用中使用此功能", "error");
-    return;
-  }
-  if (isAssociating.value) return;
-  isAssociating.value = true;
-  try {
-    await RegisterFileAssociation();
-    isAssociated.value = true;
-    showToast("已关联 .md 和 .markdown 文件！", "success");
-  } catch (e) {
-    console.error("关联失败:", e);
-    showToast("关联失败，请以管理员身份运行程序后重试", "error");
-  } finally {
-    isAssociating.value = false;
-  }
-}
-
-// 检查关联
-async function checkAssociation() {
-  if (!isWailsEnv || !IsFileAssociationSet) return;
-  try {
-    const result = await IsFileAssociationSet();
-    isAssociated.value = result;
-  } catch (e) {
-    console.warn("检查关联状态失败:", e);
-  }
-}
-
 // 加载启动文件
 async function loadStartupFile() {
   try {
@@ -796,10 +806,9 @@ sequenceDiagram
 | 快捷键 | 功能 |
 |--------|------|
 | Ctrl+O | 打开文件 |
+| Ctrl+S | 保存文件 |
+| Ctrl+Z | 撤销 |
 
----
-
-> 点击右上角按钮切换编辑/预览模式
 `;
 }
 
@@ -812,7 +821,7 @@ function handleKeyDown(e) {
   // Ctrl+S 保存
   if (e.ctrlKey && e.key === "s") {
     e.preventDefault();
-    if (viewMode.value === "split" && hasChanges.value) {
+    if (viewMode.value !== "preview" && hasChanges.value) {
       saveFile();
     }
   }
@@ -893,14 +902,48 @@ async function handleDrop(e) {
   }
 }
 
+function stripHtmlTags(text) {
+  return String(text || "")
+    .replace(/<[^>]*>/g, "")
+    .trim();
+}
+
+function findLiveHeadingElement(id) {
+  const container = liveEditorRef.value;
+  if (!container) {
+    return null;
+  }
+
+  const escapedId =
+    typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(id) : id;
+  const matchedById = container.querySelector(`#${escapedId}`);
+  if (matchedById) {
+    return matchedById;
+  }
+
+  const tocItem = tocItems.value.find((item) => item.id === id);
+  if (!tocItem) {
+    return null;
+  }
+
+  const plainText = stripHtmlTags(tocItem.text);
+  return Array.from(container.querySelectorAll(`h${tocItem.level}`)).find((node) => {
+    return node.textContent?.trim() === plainText;
+  });
+}
+
 // TOC 滚动 - 直接滚动，不用平滑效果
-function scrollToHeading(id) {
+function scrollToHeading(target) {
+  const id = typeof target === "string" ? target : target.id;
   activeTocId.value = id;
-  const el = document.getElementById(id);
+  const el =
+    viewMode.value === "live" ? findLiveHeadingElement(id) : document.getElementById(id);
   if (el) {
     const container =
       viewMode.value === "split"
         ? previewRef.value
+        : viewMode.value === "live"
+        ? liveEditorRef.value
         : document.querySelector(".content-area");
     if (container) {
       // 计算元素相对于滚动容器的位置
@@ -949,6 +992,66 @@ watch(renderedHtml, () => {
   processImagePaths();
 });
 
+watch(viewMode, async (mode) => {
+  if (mode === "live") {
+    return;
+  }
+
+  await nextTick();
+  processImagePaths();
+  await renderMermaidCharts();
+});
+
+function clampSplitEditorWidth(value) {
+  return Math.min(splitMaxPercent, Math.max(splitMinPercent, value));
+}
+
+function readStoredSplitEditorWidth() {
+  const stored = Number(localStorage.getItem(SPLIT_WIDTH_STORAGE_KEY));
+  return Number.isFinite(stored) ? clampSplitEditorWidth(stored) : 50;
+}
+
+function startResizeSplit(e) {
+  e.preventDefault();
+
+  if (viewMode.value !== "split") {
+    return;
+  }
+
+  isResizingSplit.value = true;
+  document.addEventListener("mousemove", handleResizeSplit);
+  document.addEventListener("mouseup", stopResizeSplit);
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+}
+
+function handleResizeSplit(e) {
+  if (!isResizingSplit.value || !splitContainerRef.value) {
+    return;
+  }
+
+  const rect = splitContainerRef.value.getBoundingClientRect();
+  if (rect.width <= 0) {
+    return;
+  }
+
+  const nextWidth = ((e.clientX - rect.left) / rect.width) * 100;
+  splitEditorWidth.value = Number(clampSplitEditorWidth(nextWidth).toFixed(2));
+}
+
+function stopResizeSplit() {
+  if (!isResizingSplit.value) {
+    return;
+  }
+
+  isResizingSplit.value = false;
+  document.removeEventListener("mousemove", handleResizeSplit);
+  document.removeEventListener("mouseup", stopResizeSplit);
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+  localStorage.setItem(SPLIT_WIDTH_STORAGE_KEY, String(splitEditorWidth.value));
+}
+
 // 目录宽度拖动调整
 let tocSidebarEl = null;
 
@@ -995,8 +1098,6 @@ onMounted(async () => {
 
   // 仅在 Wails 环境中执行相关操作
   if (isWailsEnv) {
-    checkAssociation();
-
     // 等待 Wails 运行时准备好
     await new Promise((resolve) => {
       if (window.go && window.go.main) {
@@ -1035,6 +1136,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleKeyDown);
+  document.removeEventListener("mousemove", handleResizeSplit);
+  document.removeEventListener("mouseup", stopResizeSplit);
+  document.removeEventListener("mousemove", handleResizeToc);
+  document.removeEventListener("mouseup", stopResizeToc);
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
   if (isWailsEnv && EventsOff) {
     try {
       EventsOff("file-changed");
@@ -1048,7 +1155,12 @@ onUnmounted(() => {
 <template>
   <div
     class="app-container"
-    :class="{ dark: isDark, dragging: isDragging, 'split-mode': viewMode === 'split' }"
+    :class="{
+      dark: isDark,
+      dragging: isDragging,
+      'split-mode': viewMode === 'split',
+      'live-mode': viewMode === 'live',
+    }"
     :style="styleConfigVars"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
@@ -1153,9 +1265,9 @@ onUnmounted(() => {
           </svg>
           <span>目录</span>
         </button>
-        <!-- 保存按钮 - 仅在分屏编辑模式下且有改动时显示 -->
+        <!-- 保存按钮 - 仅在编辑模式下且有改动时显示 -->
         <button
-          v-if="viewMode === 'split' && hasChanges"
+          v-if="viewMode !== 'preview' && hasChanges"
           class="toolbar-btn save-btn"
           @click="saveFile"
           :disabled="isSaving"
@@ -1227,62 +1339,22 @@ onUnmounted(() => {
             </svg>
           </button>
         </div>
-        <!-- 视图模式切换按钮 -->
-        <button
-          class="toolbar-btn view-btn"
-          @click="toggleViewMode"
-          :title="viewMode === 'preview' ? '切换到编辑模式' : '切换到预览模式'"
-        >
-          <svg
-            v-if="viewMode === 'preview'"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+        <!-- 视图模式切换 -->
+        <div class="view-mode-tabs" role="tablist" aria-label="视图模式">
+          <button
+            v-for="tab in VIEW_MODE_TABS"
+            :key="tab.mode"
+            class="view-mode-tab"
+            type="button"
+            role="tab"
+            :aria-selected="viewMode === tab.mode"
+            :class="{ active: viewMode === tab.mode }"
+            :title="tab.title"
+            @click="switchViewMode(tab.mode)"
           >
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
-          <svg
-            v-else
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-          <span class="view-name">{{ viewMode === "preview" ? "编辑" : "预览" }}</span>
-        </button>
-        <!-- 关联按钮 -->
-        <button
-          class="toolbar-btn associate-btn"
-          @click="associateFile"
-          :class="{ associated: isAssociated, loading: isAssociating }"
-          :title="
-            isAssociated ? 'Markdown默认打开程序' : '设置为Markdown文件默认打开程序'
-          "
-          :disabled="isAssociating"
-        >
-          <svg
-            v-if="!isAssociating"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-          </svg>
-          <span v-else class="loading-spinner"></span>
-        </button>
+            {{ tab.label }}
+          </button>
+        </div>
         <!-- 主题按钮 -->
         <button
           class="toolbar-btn"
@@ -1381,7 +1453,7 @@ onUnmounted(() => {
             class="toc-item"
             :class="{ active: activeTocId === item.id, [`toc-h${item.level}`]: true }"
             :style="tocIndent(item.level)"
-            @click="scrollToHeading(item.id)"
+            @click="scrollToHeading(item)"
           >
             {{ item.text }}
           </div>
@@ -1392,25 +1464,50 @@ onUnmounted(() => {
 
       <!-- 分屏模式 -->
       <template v-if="viewMode === 'split'">
-        <div class="split-container">
-          <textarea
-            ref="editorRef"
-            class="split-editor"
-            v-model="editedContent"
-            @scroll="handleEditorScroll"
-            @scrollend="resetSyncState"
-            placeholder="在此输入 Markdown 内容..."
-            spellcheck="false"
-          ></textarea>
-        </div>
-        <div class="split-divider"></div>
         <div
-          class="split-preview"
-          ref="previewRef"
-          @scroll="handlePreviewScroll"
-          @scrollend="resetSyncState"
+          ref="splitContainerRef"
+          class="split-workspace"
+          :class="{ resizing: isResizingSplit }"
+          :style="splitContainerStyle"
         >
-          <div class="markdown-body" v-html="renderedHtml"></div>
+          <div class="split-container">
+            <textarea
+              ref="editorRef"
+              class="split-editor"
+              v-model="editedContent"
+              @scroll="handleEditorScroll"
+              @scrollend="resetSyncState"
+              placeholder="在此输入 Markdown 内容..."
+              spellcheck="false"
+            ></textarea>
+          </div>
+          <div
+            class="split-divider split-resize-handle"
+            title="拖动调整左右宽度"
+            @mousedown="startResizeSplit"
+          ></div>
+          <div
+            class="split-preview"
+            ref="previewRef"
+            @scroll="handlePreviewScroll"
+            @scrollend="resetSyncState"
+          >
+            <div class="markdown-body" v-html="renderedHtml"></div>
+          </div>
+        </div>
+      </template>
+
+      <template v-else-if="viewMode === 'live'">
+        <div class="live-editor-view" ref="liveEditorRef">
+          <div class="live-editor-shell">
+            <LiveEditSurface
+              v-model="editedContent"
+              :placeholder="LIVE_EDIT_PLACEHOLDER"
+              :resolve-image-path="ResolveImagePath"
+              :read-image-as-base64="ReadImageAsBase64"
+              @ready="handleLiveEditorReady"
+            />
+          </div>
         </div>
       </template>
 
@@ -1457,6 +1554,7 @@ onUnmounted(() => {
   --accent-color: #0969da;
   --accent-hover: #0550ae;
   --code-bg: #f6f8fa;
+  --code-text: #1f2328;
   --code-border: #d0d7de;
   --blockquote-border: #d0d7de;
   --blockquote-bg: #f6f8fa;
@@ -1488,6 +1586,7 @@ onUnmounted(() => {
   --accent-color: #58a6ff;
   --accent-hover: #79c0ff;
   --code-bg: #161b22;
+  --code-text: #e6edf3;
   --code-border: #30363d;
   --blockquote-border: #30363d;
   --blockquote-bg: #161b22;
@@ -1519,6 +1618,7 @@ onUnmounted(() => {
   --accent-color: #0f766e;
   --accent-hover: #0d5d57;
   --code-bg: #111827;
+  --code-text: #f9fafb;
   --code-border: rgba(255, 255, 255, 0.08);
   --blockquote-border: rgba(15, 118, 110, 0.14);
   --blockquote-bg: rgba(15, 118, 110, 0.08);
@@ -1575,29 +1675,44 @@ onUnmounted(() => {
 [data-theme="elegant"] .split-preview {
   padding: var(--viewer-split-padding-y, 24px) var(--viewer-split-padding-x, 32px);
 }
+[data-theme="elegant"] .live-editor-view {
+  padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
+}
 [data-theme="elegant"] .markdown-body {
   font-family: var(--viewer-global-font-family, var(--font-body, inherit));
   line-height: 1.8;
   margin: 0 auto;
 }
 [data-theme="elegant"] .markdown-body h1 {
-  font-family: var(--viewer-h1-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-family: var(
+    --viewer-h1-font-family,
+    var(--viewer-global-font-family, var(--font-display))
+  );
   font-weight: var(--viewer-h1-font-weight, 600);
   font-size: var(--viewer-h1-font-size, clamp(1.8rem, 3vw, 2.6rem));
   border-bottom: 1px solid var(--border-color);
 }
 [data-theme="elegant"] .markdown-body h2 {
-  font-family: var(--viewer-h2-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-family: var(
+    --viewer-h2-font-family,
+    var(--viewer-global-font-family, var(--font-display))
+  );
   font-weight: var(--viewer-h2-font-weight, 600);
   font-size: var(--viewer-h2-font-size, clamp(1.4rem, 2vw, 1.8rem));
   border-bottom: 1px solid var(--border-color);
 }
 [data-theme="elegant"] .markdown-body h3 {
-  font-family: var(--viewer-h3-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-family: var(
+    --viewer-h3-font-family,
+    var(--viewer-global-font-family, var(--font-display))
+  );
   font-weight: var(--viewer-h3-font-weight, 600);
 }
 [data-theme="elegant"] .markdown-body h4 {
-  font-family: var(--viewer-h4-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-family: var(
+    --viewer-h4-font-family,
+    var(--viewer-global-font-family, var(--font-display))
+  );
   font-weight: var(--viewer-h4-font-weight, 600);
 }
 [data-theme="elegant"] .markdown-body code {
@@ -1693,22 +1808,19 @@ onUnmounted(() => {
   padding: 16px 18px;
   margin: 0;
   border-radius: 10px;
-  border: 1px solid rgba(22, 22, 22, 0.08);
+  border: 1px solid rgba(22, 22, 22, 0.01);
   background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 12px 28px rgba(22, 22, 22, 0.05);
   backdrop-filter: blur(10px);
 }
 [data-theme="elegant"] .markdown-body .task-list-item.is-pending {
   border-color: rgba(180, 83, 9, 0.18);
-  background:
-    linear-gradient(90deg, rgba(180, 83, 9, 0.12), rgba(180, 83, 9, 0) 20%),
+  background: linear-gradient(90deg, rgba(180, 83, 9, 0.12), rgba(180, 83, 9, 0) 20%),
     rgba(255, 255, 255, 0.84);
 }
 [data-theme="elegant"] .markdown-body .task-list-item.is-complete {
-  border-color: rgba(15, 118, 110, 0.18);
-  background:
-    linear-gradient(90deg, rgba(15, 118, 110, 0.12), rgba(15, 118, 110, 0) 20%),
-    rgba(255, 255, 255, 0.82);
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.12), rgba(15, 118, 110, 0) 10%),
+    rgba(255, 255, 255, 0.52);
+  box-shadow: none;
 }
 [data-theme="elegant"] .markdown-body .task-list-checkbox {
   appearance: none;
@@ -1904,7 +2016,7 @@ body {
   color: var(--text-secondary);
   border-radius: 5px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   transition: all 0.15s ease;
   -webkit-app-region: no-drag;
 }
@@ -1952,26 +2064,46 @@ body {
   justify-content: center;
 }
 
-.view-btn {
-  margin-right: 4px;
+.view-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 8px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-toolbar) 92%, white),
+      var(--bg-toolbar)
+    ),
+    var(--bg-toolbar);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 35%, transparent);
 }
-.view-btn .view-name {
+.view-mode-tab {
+  height: 21px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 12px;
-  max-width: 36px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
-.associate-btn {
-  margin-right: 4px;
+.view-mode-tab:hover {
+  color: var(--text-primary);
+  background: var(--btn-hover);
 }
-.associate-btn.associated {
-  color: var(--accent-color);
+.view-mode-tab.active {
+  color: #ffffff;
+  background: var(--accent-color);
 }
-.associate-btn.associated svg {
-  fill: var(--accent-color);
-  fill-opacity: 0.2;
-}
-.associate-btn.loading {
-  opacity: 0.7;
-  cursor: wait;
+.view-mode-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 58%, transparent);
+  outline-offset: 2px;
 }
 .theme-btn {
   margin-right: 4px;
@@ -2148,14 +2280,26 @@ body {
 }
 
 /* 分屏模式 */
-.split-container {
+.split-workspace {
   flex: 1;
+  min-width: 0;
   display: flex;
   overflow: hidden;
   height: calc(100vh - 44px);
 }
+
+.split-container {
+  flex: 0 0 var(--split-editor-width, 50%);
+  min-width: 220px;
+  display: flex;
+  overflow: hidden;
+  height: 100%;
+}
+
 .split-editor {
   flex: 1;
+  min-width: 0;
+  height: 100%;
   padding: 20px;
   border: none;
   background: var(--bg-editor);
@@ -2167,21 +2311,353 @@ body {
   outline: none;
 }
 .split-divider {
-  width: 1px;
-  background: var(--border-color);
+  flex: 0 0 10px;
+  width: 10px;
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
   flex-shrink: 0;
 }
+.split-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--border-color);
+  transition: background 0.2s ease, box-shadow 0.2s ease, width 0.2s ease, left 0.2s ease;
+}
+.split-divider:hover::before,
+.split-workspace.resizing .split-divider::before {
+  left: 3px;
+  width: 3px;
+  background: var(--accent-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 16%, transparent);
+}
 .split-preview {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 220px;
   overflow-y: auto;
   padding: var(--viewer-split-padding-y, 20px) var(--viewer-split-padding-x, 24px);
+  height: 100%;
+  max-height: none;
+}
+
+.live-editor-view {
+  flex: 1;
+  overflow-y: auto;
   max-height: calc(100vh - 44px);
+  padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
+  /* background: var(--bg-primary); */
+  color: var(--viewer-global-color, var(--text-primary));
+}
+
+.live-editor-shell {
+  width: min(100%, var(--viewer-content-max-width, 100%));
+  margin: 0 auto;
+  color: var(--viewer-global-color, var(--text-primary));
+  font-family: var(--viewer-global-font-family, inherit);
+  font-size: var(--viewer-body-font-size, var(--base-font-size, 16px));
+  font-weight: var(--viewer-global-font-weight, inherit);
+  font-style: var(--viewer-global-font-style, inherit);
+  line-height: 1.8;
+}
+
+.live-editor-shell .live-edit-surface,
+.live-editor-shell .live-edit-host,
+.live-editor-shell .md-live-editor-host {
+  min-height: 100%;
+}
+
+/* Live edit DOMD theme bridge: keep this module removable and scoped. */
+.live-editor-shell .DOMD-Root {
+  --domd-base-100: var(--bg-primary);
+  --domd-base-200: var(--bg-secondary);
+  --domd-base-300: var(--bg-toolbar);
+  --domd-base-content: var(--viewer-global-color, var(--text-primary));
+  --domd-info-content: var(--viewer-a-color, var(--accent-color));
+  --domd-info: var(--accent-color);
+  --domd-text: var(--viewer-global-color, var(--text-primary));
+  --domd-blockquote-text: var(--text-secondary);
+  --domd-link-text: var(--viewer-a-color, var(--accent-color));
+  --domd-placeholder-text: var(--text-tertiary);
+  --domd-border: var(--border-color);
+  --domd-table-border: var(--table-border);
+  --domd-blockquote-border: var(--blockquote-border);
+  --domd-hr-bg: var(--border-color);
+  --domd-hr-active: var(--accent-color);
+  --domd-code-bg: var(--code-bg);
+  --domd-pre-bg: var(--code-bg);
+  --domd-pre-topbar-bg: var(--code-bg);
+  --domd-font-size-base: var(--viewer-body-font-size, var(--base-font-size, 16px));
+  --domd-font-size-h1: var(--viewer-h1-font-size, 2em);
+  --domd-font-size-h2: var(--viewer-h2-font-size, 1.5em);
+  --domd-font-size-h3: var(--viewer-h3-font-size, 1.25em);
+  --domd-font-size-h4: var(--viewer-h4-font-size, 1em);
+  --domd-font-size-h5: var(--viewer-h5-font-size, 0.875em);
+  --domd-font-size-h6: var(--viewer-h6-font-size, 0.85em);
+  color: var(--viewer-global-color, var(--text-primary));
+  font-family: var(--viewer-global-font-family, inherit);
+  font-size: var(--viewer-body-font-size, var(--base-font-size, 16px));
+  font-weight: var(--viewer-global-font-weight, inherit);
+  font-style: var(--viewer-global-font-style, inherit);
+  line-height: 1.7;
+  caret-color: var(--accent-color);
+  background: transparent;
+}
+
+.live-editor-shell h1,
+.live-editor-shell .DOMD-H1 {
+  font-size: var(--viewer-h1-font-size, 2em);
+  color: var(--viewer-h1-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h1-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h1-font-weight, 600);
+  font-style: var(--viewer-h1-font-style, normal);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.3em;
+}
+
+.live-editor-shell h2,
+.live-editor-shell .DOMD-H2 {
+  font-size: var(--viewer-h2-font-size, 1.5em);
+  color: var(--viewer-h2-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h2-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h2-font-weight, 600);
+  font-style: var(--viewer-h2-font-style, normal);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.3em;
+}
+
+.live-editor-shell h3,
+.live-editor-shell .DOMD-H3 {
+  font-size: var(--viewer-h3-font-size, 1.25em);
+  color: var(--viewer-h3-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h3-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h3-font-weight, 600);
+  font-style: var(--viewer-h3-font-style, normal);
+}
+
+.live-editor-shell h4,
+.live-editor-shell .DOMD-H4 {
+  font-size: var(--viewer-h4-font-size, 1em);
+  color: var(--viewer-h4-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h4-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h4-font-weight, 600);
+  font-style: var(--viewer-h4-font-style, normal);
+}
+
+.live-editor-shell h5,
+.live-editor-shell .DOMD-H5 {
+  font-size: var(--viewer-h5-font-size, 0.875em);
+  color: var(--viewer-h5-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h5-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h5-font-weight, 600);
+  font-style: var(--viewer-h5-font-style, normal);
+}
+
+.live-editor-shell h6,
+.live-editor-shell .DOMD-H6 {
+  font-size: var(--viewer-h6-font-size, 0.85em);
+  color: var(--viewer-h6-color, var(--viewer-global-color, var(--text-secondary)));
+  font-family: var(--viewer-h6-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h6-font-weight, 600);
+  font-style: var(--viewer-h6-font-style, normal);
+}
+
+.live-editor-shell p,
+.live-editor-shell .DOMD-P,
+.live-editor-shell .DOMD-EmptyP,
+.live-editor-shell .DOMD-LiP {
+  color: var(--viewer-p-color, inherit);
+  font-family: var(--viewer-p-font-family, inherit);
+  font-weight: var(--viewer-p-font-weight, inherit);
+  font-style: var(--viewer-p-font-style, inherit);
+}
+
+.live-editor-shell a,
+.live-editor-shell .DOMD-Link {
+  color: var(--viewer-a-color, var(--accent-color));
+  font-family: var(--viewer-a-font-family, inherit);
+  font-weight: var(--viewer-a-font-weight, inherit);
+  font-style: var(--viewer-a-font-style, inherit);
+  text-decoration: none;
+}
+
+.live-editor-shell a:hover,
+.live-editor-shell .DOMD-Link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.live-editor-shell strong,
+.live-editor-shell .DOMD-Bold {
+  color: var(--viewer-strong-color, inherit);
+  font-family: var(--viewer-strong-font-family, inherit);
+  font-weight: var(--viewer-strong-font-weight, 600);
+  font-style: var(--viewer-strong-font-style, inherit);
+}
+
+.live-editor-shell em,
+.live-editor-shell .DOMD-Em {
+  color: var(--viewer-em-color, inherit);
+  font-family: var(--viewer-em-font-family, inherit);
+  font-weight: var(--viewer-em-font-weight, inherit);
+  font-style: var(--viewer-em-font-style, italic);
+}
+
+.live-editor-shell .DOMD-EmBold {
+  color: var(--viewer-strong-color, var(--viewer-em-color, inherit));
+  font-family: var(--viewer-strong-font-family, var(--viewer-em-font-family, inherit));
+  font-weight: var(--viewer-strong-font-weight, 700);
+  font-style: var(--viewer-em-font-style, italic);
+}
+
+.live-editor-shell blockquote,
+.live-editor-shell .DOMD-Blockquote {
+  color: var(--text-secondary);
+  border-left: 4px solid var(--blockquote-border);
+  background: var(--blockquote-bg);
+  border-radius: 10px;
+}
+
+.live-editor-shell code,
+.live-editor-shell .DOMD-Code {
+  color: var(--code-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 10px;
+}
+
+.live-editor-shell pre,
+.live-editor-shell .DOMD-Pre {
+  color: var(--code-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 10px;
+}
+
+.live-editor-shell .DOMD-PreCode,
+.live-editor-shell .DOMD-PreCodeEmpty,
+.live-editor-shell .DOMD-PreCodeContent,
+.live-editor-shell [class*="DOMD-CodeSpan"] {
+  color: var(--code-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.live-editor-shell .DOMD-PreCodeTopBar {
+  color: color-mix(in srgb, var(--code-text) 72%, transparent);
+  background: color-mix(in srgb, var(--code-bg) 92%, var(--bg-toolbar));
+  border-bottom: 1px solid var(--code-border);
+}
+
+.live-editor-shell table,
+.live-editor-shell .DOMD-Table {
+  border-collapse: collapse;
+}
+
+.live-editor-shell th,
+.live-editor-shell td,
+.live-editor-shell .DOMD-TH,
+.live-editor-shell .DOMD-TD {
+  border: 1px solid var(--table-border);
+  color: inherit;
+}
+
+.live-editor-shell th,
+.live-editor-shell .DOMD-TH {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+
+.live-editor-shell tr:nth-child(2n),
+.live-editor-shell .DOMD-TR:nth-child(2n) {
+  background: var(--table-stripe);
+}
+
+.live-editor-shell ul,
+.live-editor-shell ol,
+.live-editor-shell .DOMD-Ul,
+.live-editor-shell .DOMD-Ol,
+.live-editor-shell .DOMD-CheckBoxUl {
+  color: inherit;
+  font-family: inherit;
+}
+
+.live-editor-shell li,
+.live-editor-shell .DOMD-li {
+  color: inherit;
+}
+
+.live-editor-shell .DOMD-CheckBoxLabel input {
+  accent-color: var(--accent-color);
+}
+
+.live-editor-shell .DOMD-CheckBoxLi {
+  color: var(--viewer-task-pending-color, var(--viewer-p-color, inherit));
+  font-family: var(
+    --viewer-task-pending-font-family,
+    var(--viewer-p-font-family, inherit)
+  );
+  font-weight: var(
+    --viewer-task-pending-font-weight,
+    var(--viewer-p-font-weight, inherit)
+  );
+  font-style: var(--viewer-task-pending-font-style, var(--viewer-p-font-style, inherit));
+}
+
+.live-editor-shell .DOMD-CheckBoxLi::before {
+  content: "待执行";
+  align-self: flex-start;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  padding: 0.12em 0.55em;
+  font-size: 0.78em;
+  line-height: 1.4;
+  color: var(--viewer-task-badge-pending-color, #9a3412);
+  font-family: var(--viewer-task-badge-pending-font-family, inherit);
+  font-weight: var(--viewer-task-badge-pending-font-weight, 700);
+  font-style: var(--viewer-task-badge-pending-font-style, normal);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.live-editor-shell .DOMD-CheckBoxLi:has(input[type="checkbox"]:checked) {
+  color: var(--viewer-task-complete-color, var(--text-secondary));
+  font-family: var(
+    --viewer-task-complete-font-family,
+    var(--viewer-p-font-family, inherit)
+  );
+  font-weight: var(
+    --viewer-task-complete-font-weight,
+    var(--viewer-p-font-weight, inherit)
+  );
+  font-style: var(--viewer-task-complete-font-style, var(--viewer-p-font-style, inherit));
+  opacity: 0.82;
+}
+
+.live-editor-shell .DOMD-CheckBoxLi:has(input[type="checkbox"]:checked) .DOMD-LiP {
+  text-decoration: line-through;
+}
+
+.live-editor-shell .DOMD-CheckBoxLi:has(input[type="checkbox"]:checked)::before {
+  content: "已完成";
+  color: var(--viewer-task-badge-complete-color, #0f766e);
+  font-family: var(--viewer-task-badge-complete-font-family, inherit);
+  font-weight: var(--viewer-task-badge-complete-font-weight, 700);
+  font-style: var(--viewer-task-badge-complete-font-style, normal);
+}
+
+.live-editor-shell img,
+.live-editor-shell .DOMD-Img {
+  max-width: 100%;
 }
 
 /* 保存按钮样式 */
-.save-btn:hover {
-  background: var(--btn-hover);
-  color: var(--text-primary);
+.save-btn {
+  color: #ffffff;
+  background: var(--accent-color);
 }
 
 /* Toast 提示样式 */
@@ -2249,26 +2725,30 @@ body {
 .toc-list::-webkit-scrollbar,
 .editor::-webkit-scrollbar,
 .split-editor::-webkit-scrollbar,
-.split-preview::-webkit-scrollbar {
+.split-preview::-webkit-scrollbar,
+.live-editor-view::-webkit-scrollbar {
   width: 8px;
 }
 .content-area::-webkit-scrollbar-track,
 .toc-list::-webkit-scrollbar-track,
 .editor::-webkit-scrollbar-track,
 .split-editor::-webkit-scrollbar-track,
-.split-preview::-webkit-scrollbar-track {
+.split-preview::-webkit-scrollbar-track,
+.live-editor-view::-webkit-scrollbar-track {
   background: var(--scrollbar-track);
 }
 .content-area::-webkit-scrollbar-thumb,
 .toc-list::-webkit-scrollbar-thumb,
 .editor::-webkit-scrollbar-thumb,
 .split-editor::-webkit-scrollbar-thumb,
-.split-preview::-webkit-scrollbar-thumb {
+.split-preview::-webkit-scrollbar-thumb,
+.live-editor-view::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 10px;
 }
 .content-area::-webkit-scrollbar-thumb:hover,
-.toc-list::-webkit-scrollbar-thumb:hover {
+.toc-list::-webkit-scrollbar-thumb:hover,
+.live-editor-view::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
 }
 
@@ -2396,6 +2876,7 @@ body {
   overflow: auto;
   font-size: 85%;
   line-height: 1.5;
+  color: var(--code-text);
   background: var(--code-bg);
   border: 1px solid var(--code-border);
   border-radius: 10px;
@@ -2474,7 +2955,14 @@ body {
   accent-color: var(--accent-color);
 }
 .markdown-body .task-status-badge {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 0.12em 0.55em;
+  font-size: 0.78em;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 .markdown-body .task-list-content {
   flex: 1;
@@ -2485,6 +2973,35 @@ body {
 }
 .markdown-body .task-list-content > :last-child {
   margin-bottom: 0;
+}
+.markdown-body .task-list-item.is-pending .task-list-content {
+  color: var(--viewer-task-pending-color, inherit);
+  font-family: var(--viewer-task-pending-font-family, inherit);
+  font-weight: var(--viewer-task-pending-font-weight, inherit);
+  font-style: var(--viewer-task-pending-font-style, inherit);
+}
+.markdown-body .task-list-item.is-complete .task-list-content {
+  color: var(--viewer-task-complete-color, var(--text-secondary));
+  font-family: var(--viewer-task-complete-font-family, inherit);
+  font-weight: var(--viewer-task-complete-font-weight, inherit);
+  font-style: var(--viewer-task-complete-font-style, inherit);
+  text-decoration: line-through;
+  opacity: 0.82;
+}
+.markdown-body .task-list-item.is-pending .task-status-badge {
+  color: var(--viewer-task-badge-pending-color, #9a3412);
+  font-family: var(--viewer-task-badge-pending-font-family, inherit);
+  font-weight: var(--viewer-task-badge-pending-font-weight, 700);
+  font-style: var(--viewer-task-badge-pending-font-style, normal);
+}
+.markdown-body .task-list-item.is-complete .task-status-badge {
+  color: var(--viewer-task-badge-complete-color, #0f766e);
+  font-family: var(--viewer-task-badge-complete-font-family, inherit);
+  font-weight: var(--viewer-task-badge-complete-font-weight, 700);
+  font-style: var(--viewer-task-badge-complete-font-style, normal);
+}
+.markdown-body .task-list-item.is-complete .task-list-content a {
+  color: var(--viewer-task-complete-color, #0f766e);
 }
 
 /* 图表样式 */

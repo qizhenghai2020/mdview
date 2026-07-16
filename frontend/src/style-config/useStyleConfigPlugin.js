@@ -20,23 +20,29 @@ function scaleToPx(value, zoomScale) {
   return `${scaled}px`;
 }
 
+function toCssVarSegment(key) {
+  return key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+}
+
 function applyElementVars(target, key, elementStyle) {
   if (!elementStyle) return;
 
+  const cssKey = toCssVarSegment(key);
+
   if (elementStyle.color && elementStyle.color !== "inherit") {
-    target[`--viewer-${key}-color`] = elementStyle.color;
+    target[`--viewer-${cssKey}-color`] = elementStyle.color;
   }
 
   if (elementStyle.fontFamily && elementStyle.fontFamily !== "inherit") {
-    target[`--viewer-${key}-font-family`] = resolveFontStack(elementStyle.fontFamily);
+    target[`--viewer-${cssKey}-font-family`] = resolveFontStack(elementStyle.fontFamily);
   }
 
   if (elementStyle.bold !== "inherit") {
-    target[`--viewer-${key}-font-weight`] = elementStyle.bold ? "700" : "400";
+    target[`--viewer-${cssKey}-font-weight`] = elementStyle.bold ? "700" : "400";
   }
 
   if (elementStyle.italic !== "inherit") {
-    target[`--viewer-${key}-font-style`] = elementStyle.italic ? "italic" : "normal";
+    target[`--viewer-${cssKey}-font-style`] = elementStyle.italic ? "italic" : "normal";
   }
 }
 
