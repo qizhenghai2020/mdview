@@ -6,26 +6,63 @@ import mermaid from "mermaid";
 import StyleConfigPanel from "./style-config/StyleConfigPanel.vue";
 import LiveEditSurface from "./live-edit/LiveEditSurface.vue";
 import { useStyleConfigPlugin } from "./style-config/useStyleConfigPlugin";
+import SettingsModal from "./settings/SettingsModal.vue";
+import { DEFAULT_APP_SETTINGS } from "./settings/constants";
+import { useAppSettings } from "./settings/useAppSettings";
+import SmartFormatFailureModal from "./ai/SmartFormatFailureModal.vue";
+import SmartFormatPromptModal from "./ai/SmartFormatPromptModal.vue";
+import SmartFormatPreviewModal from "./ai/SmartFormatPreviewModal.vue";
+import FileConflictModal from "./file-sync/FileConflictModal.vue";
+import FileTree from "./file-explorer/FileTree.vue";
 
 // 检测是否在 Wails 环境中运行
 const isWailsEnv = typeof window !== "undefined" && window.go && window.go.main;
 
 // Wails API 引用
-let EventsOnFunc, EventsOffFunc;
+let EventsOnFunc,
+  EventsOffFunc,
+  OnFileDropFunc,
+  OnFileDropOffFunc,
+  WindowMinimiseFunc,
+  WindowToggleMaximiseFunc,
+  WindowIsMaximisedFunc,
+  WindowSetDarkThemeFunc,
+  WindowSetLightThemeFunc,
+  WindowSetBackgroundColourFunc,
+  QuitFunc;
 let OpenFileDialogFunc,
+  OpenFilesDialogFunc,
+  OpenDirectoryDialogFunc,
+  BuildFileWorkspaceFunc,
+  ReadFileFunc,
   GetFileNameFunc,
   GetFilePathFunc,
   ResolveImagePathFunc,
   ReadImageAsBase64Func,
   GetStartupFileFunc,
   ReadFileAndUpdateWatchFunc,
-  WriteFileFunc;
+  WriteFileFunc,
+  FormatMarkdownWithAIFunc,
+  TestAIModelFunc;
 
 if (isWailsEnv) {
   try {
     EventsOnFunc = window.runtime.EventsOn;
     EventsOffFunc = window.runtime.EventsOff;
+    OnFileDropFunc = window.runtime.OnFileDrop;
+    OnFileDropOffFunc = window.runtime.OnFileDropOff;
+    WindowMinimiseFunc = window.runtime.WindowMinimise;
+    WindowToggleMaximiseFunc = window.runtime.WindowToggleMaximise;
+    WindowIsMaximisedFunc = window.runtime.WindowIsMaximised;
+    WindowSetDarkThemeFunc = window.runtime.WindowSetDarkTheme;
+    WindowSetLightThemeFunc = window.runtime.WindowSetLightTheme;
+    WindowSetBackgroundColourFunc = window.runtime.WindowSetBackgroundColour;
+    QuitFunc = window.runtime.Quit;
     OpenFileDialogFunc = window.go.main.App.OpenFileDialog;
+    OpenFilesDialogFunc = window.go.main.App.OpenFilesDialog;
+    OpenDirectoryDialogFunc = window.go.main.App.OpenDirectoryDialog;
+    BuildFileWorkspaceFunc = window.go.main.App.BuildFileWorkspace;
+    ReadFileFunc = window.go.main.App.ReadFile;
     GetFileNameFunc = window.go.main.App.GetFileName;
     GetFilePathFunc = window.go.main.App.GetFilePath;
     ResolveImagePathFunc = window.go.main.App.ResolveImagePath;
@@ -33,6 +70,8 @@ if (isWailsEnv) {
     GetStartupFileFunc = window.go.main.App.GetStartupFile;
     ReadFileAndUpdateWatchFunc = window.go.main.App.ReadFileAndUpdateWatch;
     WriteFileFunc = window.go.main.App.WriteFile;
+    FormatMarkdownWithAIFunc = window.go.main.App.FormatMarkdownWithAI;
+    TestAIModelFunc = window.go.main.App.TestAIModel;
   } catch (e) {
     console.warn("加载 Wails API 失败:", e);
   }
@@ -45,8 +84,26 @@ function EventsOn(eventName, callback) {
 function EventsOff(eventName) {
   if (EventsOffFunc) return EventsOffFunc(eventName);
 }
+function OnFileDrop(callback, useDropTarget = false) {
+  if (OnFileDropFunc) return OnFileDropFunc(callback, useDropTarget);
+}
+function OnFileDropOff() {
+  if (OnFileDropOffFunc) return OnFileDropOffFunc();
+}
 function OpenFileDialog() {
   if (OpenFileDialogFunc) return OpenFileDialogFunc();
+}
+function OpenFilesDialog() {
+  if (OpenFilesDialogFunc) return OpenFilesDialogFunc();
+}
+function OpenDirectoryDialog() {
+  if (OpenDirectoryDialogFunc) return OpenDirectoryDialogFunc();
+}
+function BuildFileWorkspace(paths) {
+  if (BuildFileWorkspaceFunc) return BuildFileWorkspaceFunc(paths);
+}
+function ReadFile(path) {
+  if (ReadFileFunc) return ReadFileFunc(path);
 }
 function GetFileName() {
   if (GetFileNameFunc) return GetFileNameFunc();
@@ -69,6 +126,21 @@ function ReadFileAndUpdateWatch(path) {
 function WriteFile(path, content) {
   if (WriteFileFunc) return WriteFileFunc(path, content);
 }
+function FormatMarkdownWithAI(request) {
+  if (FormatMarkdownWithAIFunc) return FormatMarkdownWithAIFunc(request);
+}
+function TestAIModel(model) {
+  if (TestAIModelFunc) return TestAIModelFunc(model);
+  return Promise.reject(new Error("请在桌面应用中测试模型"));
+}
+
+const { settings: appSettings } = useAppSettings();
+
+function readPreference(key) {
+  return appSettings.value.persistence[key]
+    ? appSettings.value[key]
+    : DEFAULT_APP_SETTINGS[key];
+}
 
 const markdownContent = ref("");
 const editedContent = ref("");
@@ -76,14 +148,18 @@ const originalContent = ref(""); // 用于保存原始内容，判断是否有�
 const renderedHtml = ref("");
 const fileName = ref("未打开文件");
 const filePath = ref("");
+const workspaceRoots = ref([]);
+const workspaceFileCount = ref(0);
+const expandedTreePaths = ref(new Set());
+const sidebarSection = ref("outline");
 const isDark = ref(false);
 const showToc = ref(true);
 const tocItems = ref([]);
 const activeTocId = ref("");
 const isDragging = ref(false);
-const zoomLevel = ref(100);
-const currentTheme = ref("elegant");
-const viewMode = ref("preview"); // 'preview' | 'split' | 'live'
+const zoomLevel = ref(readPreference("zoom"));
+const currentTheme = ref(readPreference("theme"));
+const viewMode = ref(readPreference("viewMode")); // 'preview' | 'split' | 'live'
 const editorRef = ref(null);
 const previewRef = ref(null);
 const liveEditorRef = ref(null);
@@ -96,6 +172,29 @@ const historyIndex = ref(-1); // 当前历史位置
 const MAX_HISTORY = 50; // 最大历史记录数
 const isLoading = ref(false); // 文档加载状态
 const loadingText = ref("加载中..."); // 加载提示文字
+const showSettingsModal = ref(false);
+const settingsInitialSection = ref("general");
+const externalConflictContent = ref(null);
+const showFileConflictModal = ref(false);
+const isResolvingFileConflict = ref(false);
+const isWindowMaximized = ref(false);
+const isSmartFormatting = ref(false);
+const showSmartFormatFailure = ref(false);
+const showSmartFormatPrompt = ref(false);
+const showSmartFormatPreview = ref(false);
+const smartFormatError = ref("");
+const smartFormatRetryModelId = ref("");
+const smartFormatOriginalContent = ref("");
+const smartFormatCandidateContent = ref("");
+const smartFormatInstruction = ref("");
+const MARKDOWN_EXTENSIONS = new Set([
+  ".md",
+  ".markdown",
+  ".mdown",
+  ".mkdn",
+  ".mkd",
+  ".mdwn",
+]);
 const LIVE_EDIT_PLACEHOLDER = "在此实时编辑 Markdown 内容...";
 const VIEW_MODE_TABS = [
   { mode: "preview", label: "预览", title: "切换到预览模式" },
@@ -104,18 +203,30 @@ const VIEW_MODE_TABS = [
 ];
 
 // 目录宽度相关
-const tocWidth = ref(parseInt(localStorage.getItem("tocWidth")) || 240);
+const tocWidth = ref(readPreference("tocWidth"));
 const isResizingToc = ref(false);
 const tocMinWidth = 120;
 const tocMaxWidth = 500;
-const SPLIT_WIDTH_STORAGE_KEY = "md-viewer.split-editor-width";
 const splitMinPercent = 20;
 const splitMaxPercent = 80;
-const splitEditorWidth = ref(readStoredSplitEditorWidth());
+const splitEditorWidth = ref(readPreference("splitWidth"));
 const isResizingSplit = ref(false);
 const splitContainerStyle = computed(() => ({
   "--split-editor-width": `${splitEditorWidth.value}%`,
 }));
+const hasWorkspaceFiles = computed(() => workspaceFileCount.value > 0);
+const shouldShowSidebar = computed(
+  () => showToc.value && (hasWorkspaceFiles.value || tocItems.value.length > 0)
+);
+const isMarkdownDocument = computed(() => {
+  if (!filePath.value && fileName.value === "未打开文件") {
+    return true;
+  }
+  return MARKDOWN_EXTENSIONS.has(getFileExtension(filePath.value || fileName.value));
+});
+const editorPlaceholder = computed(() =>
+  isMarkdownDocument.value ? "在此输入 Markdown 内容..." : "在此编辑文本内容..."
+);
 
 const {
   styleConfig,
@@ -125,6 +236,60 @@ const {
   hasCustomStyleConfig,
   resetStyleConfig,
 } = useStyleConfigPlugin(currentTheme, zoomLevel);
+
+const enabledSmartFormatModels = computed(() =>
+  appSettings.value.models.filter(
+    (model) => model.enabled && model.verified && model.testStatus === "passed"
+  )
+);
+
+const activeSmartFormatModel = computed(() => {
+  return (
+    enabledSmartFormatModels.value.find(
+      (model) => model.id === appSettings.value.activeModelId
+    ) ||
+    enabledSmartFormatModels.value[0] ||
+    null
+  );
+});
+
+function persistPreference(key, value) {
+  if (appSettings.value.persistence[key]) {
+    appSettings.value[key] = value;
+  }
+}
+
+function syncEnabledPreferences() {
+  const preferenceValues = {
+    theme: currentTheme.value,
+    zoom: zoomLevel.value,
+    viewMode: viewMode.value,
+    tocWidth: tocWidth.value,
+    splitWidth: splitEditorWidth.value,
+  };
+
+  for (const [key, value] of Object.entries(preferenceValues)) {
+    if (appSettings.value.persistence[key]) {
+      appSettings.value[key] = value;
+    } else {
+      appSettings.value[key] = DEFAULT_APP_SETTINGS[key];
+    }
+  }
+}
+
+watch(
+  () => appSettings.value.persistence,
+  () => {
+    syncEnabledPreferences();
+  },
+  { deep: true }
+);
+
+watch(currentTheme, (value) => persistPreference("theme", value));
+watch(zoomLevel, (value) => persistPreference("zoom", value));
+watch(viewMode, (value) => persistPreference("viewMode", value));
+watch(tocWidth, (value) => persistPreference("tocWidth", value));
+watch(splitEditorWidth, (value) => persistPreference("splitWidth", value));
 
 // 初始化 Mermaid
 mermaid.initialize({
@@ -348,6 +513,13 @@ async function renderMarkdown() {
   headings = [];
   headingCounter = {};
   mermaidIdCounter.value = 0;
+
+  if (!isMarkdownDocument.value) {
+    renderedHtml.value = "";
+    tocItems.value = [];
+    return;
+  }
+
   const html = marked(markdownContent.value, { renderer });
   renderedHtml.value = enhanceTaskListHtml(html);
   tocItems.value = [...headings];
@@ -378,6 +550,21 @@ watch(markdownContent, () => {
   renderMarkdown();
 });
 
+watch(isMarkdownDocument, () => {
+  renderMarkdown();
+});
+
+watch(
+  [() => tocItems.value.length, hasWorkspaceFiles],
+  ([outlineCount, hasFiles]) => {
+    if (sidebarSection.value === "outline" && !outlineCount && hasFiles) {
+      sidebarSection.value = "files";
+    } else if (sidebarSection.value === "files" && !hasFiles && outlineCount) {
+      sidebarSection.value = "outline";
+    }
+  }
+);
+
 // 分屏模式下渲染完成后处理图片
 watch(renderedHtml, () => {
   processImagePaths();
@@ -387,6 +574,8 @@ watch(renderedHtml, () => {
 const hasChanges = computed(() => {
   return editedContent.value !== originalContent.value;
 });
+
+const hasFileConflict = computed(() => externalConflictContent.value !== null);
 
 // 添加编辑历史记录
 function addToHistory(content) {
@@ -438,15 +627,162 @@ watch(editedContent, (newVal, oldVal) => {
   markdownContent.value = editedContent.value;
 });
 
-// 打开文件
+function replaceContentFromDisk(content) {
+  const changed = editedContent.value !== content;
+  isExternalChange.value = changed;
+  markdownContent.value = content;
+  editedContent.value = content;
+  originalContent.value = content;
+  lastEditedContent = content;
+  editHistory.value = [content];
+  historyIndex.value = 0;
+  clearFileConflict();
+
+  return true;
+}
+
+function clearFileConflict() {
+  externalConflictContent.value = null;
+  showFileConflictModal.value = false;
+  externalConflictNotified = false;
+}
+
+function markFileConflict(content) {
+  externalConflictContent.value = content;
+  if (!externalConflictNotified) {
+    showToast("检测到本地编辑与外部修改冲突，请在标题旁选择保留版本", "error");
+    externalConflictNotified = true;
+  }
+}
+
+function openFileConflictResolution() {
+  if (hasFileConflict.value) {
+    showFileConflictModal.value = true;
+  }
+}
+
+function getFileExtension(path) {
+  const file = String(path || "").split(/[\\/]/).pop() || "";
+  const dotIndex = file.lastIndexOf(".");
+  return dotIndex > 0 ? file.slice(dotIndex).toLowerCase() : "";
+}
+
+function firstFileInTree(nodes) {
+  for (const node of nodes || []) {
+    if (!node.isDir) {
+      return node.path;
+    }
+    const childPath = firstFileInTree(node.children);
+    if (childPath) {
+      return childPath;
+    }
+  }
+  return "";
+}
+
+function getDefaultExpandedTreePaths(nodes) {
+  return new Set((nodes || []).filter((node) => node.isDir).map((node) => node.path));
+}
+
+function toggleTreePath(path) {
+  const nextPaths = new Set(expandedTreePaths.value);
+  if (nextPaths.has(path)) {
+    nextPaths.delete(path);
+  } else {
+    nextPaths.add(path);
+  }
+  expandedTreePaths.value = nextPaths;
+}
+
+async function setFileWorkspace(paths, { openFirst = true } = {}) {
+  const selectedPaths = Array.from(new Set((paths || []).filter(Boolean)));
+  if (!selectedPaths.length || !BuildFileWorkspaceFunc) {
+    return false;
+  }
+
+  if (openFirst && hasChanges.value) {
+    const shouldDiscard = window.confirm(
+      `“${fileName.value}”还有未保存的修改。是否放弃修改并打开新的文件列表？`
+    );
+    if (!shouldDiscard) {
+      return false;
+    }
+  }
+
+  isLoading.value = true;
+  loadingText.value = "正在整理文本文件...";
+  try {
+    const workspace = await BuildFileWorkspace(selectedPaths);
+    const roots = Array.isArray(workspace?.roots) ? workspace.roots : [];
+    const fileCount = Number(workspace?.fileCount || 0);
+
+    if (!fileCount) {
+      showToast("所选内容中没有可打开的文本文件", "error");
+      return false;
+    }
+
+    workspaceRoots.value = roots;
+    workspaceFileCount.value = fileCount;
+    expandedTreePaths.value = getDefaultExpandedTreePaths(roots);
+    sidebarSection.value = "files";
+    showToc.value = true;
+
+    if (workspace?.truncated) {
+      showToast("目录文件较多，已显示前 10000 个文本文件", "error");
+    }
+
+    if (openFirst) {
+      const firstPath = firstFileInTree(roots);
+      if (firstPath) {
+        await loadFile(firstPath);
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error("构建文件目录失败:", e);
+    showToast("打开文件目录失败：" + (e.message || e), "error");
+    return false;
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function openWorkspaceFile(path) {
+  if (!path || normalizeWindowsPath(path) === normalizeWindowsPath(filePath.value)) {
+    return;
+  }
+
+  if (hasChanges.value) {
+    const shouldDiscard = window.confirm(
+      `“${fileName.value}”还有未保存的修改。是否放弃修改并打开其他文件？`
+    );
+    if (!shouldDiscard) {
+      return;
+    }
+  }
+
+  await loadFile(path);
+}
+
+// 打开一个或多个文本文件
 async function openFile() {
-  if (!isWailsEnv || !OpenFileDialog) {
+  if (!isWailsEnv || (!OpenFilesDialogFunc && !OpenFileDialogFunc)) {
     showToast("请在桌面应用中使用此功能", "error");
     return;
   }
-  const path = await OpenFileDialog();
+  const paths = OpenFilesDialogFunc ? await OpenFilesDialog() : [await OpenFileDialog()];
+  if (!paths?.length) return;
+  await setFileWorkspace(paths);
+}
+
+async function openDirectory() {
+  if (!isWailsEnv || !OpenDirectoryDialogFunc || !BuildFileWorkspaceFunc) {
+    showToast("请在桌面应用中使用此功能", "error");
+    return;
+  }
+  const path = await OpenDirectoryDialog();
   if (!path) return;
-  await loadFile(path);
+  await setFileWorkspace([path]);
 }
 
 // 加载文件（带监听）
@@ -456,20 +792,13 @@ async function loadFile(path) {
     return;
   }
   isLoading.value = true;
-  loadingText.value = "正在加载文档...";
+  loadingText.value = "正在加载文本文件...";
   try {
     const content = await ReadFileAndUpdateWatch(path);
-    isExternalChange.value = true;
-    markdownContent.value = content;
-    editedContent.value = content;
-    originalContent.value = content;
-    lastEditedContent = content;
-    // 重置编辑历史
-    editHistory.value = [content];
-    historyIndex.value = 0;
     fileName.value = await GetFileName();
-    filePath.value = await GetFilePath();
-    viewMode.value = "preview";
+    filePath.value = (await GetFilePath()) || path;
+    replaceContentFromDisk(content);
+    viewMode.value = readPreference("viewMode");
   } catch (e) {
     console.error("读取文件失败:", e);
     showToast("读取文件失败: " + (e.message || e), "error");
@@ -478,33 +807,151 @@ async function loadFile(path) {
   }
 }
 
-// 处理文件外部变更
-async function handleFileChanged() {
-  if (!isWailsEnv || !ReadFileAndUpdateWatch) return;
-  if (!filePath.value) return;
-  isLoading.value = true;
-  loadingText.value = "文件已更新，正在重新加载...";
+let pendingRefreshRequest = null;
+let isCheckingCurrentFile = false;
+let externalConflictNotified = false;
+let filePollingTimer = null;
+
+function normalizeWindowsPath(path) {
+  return String(path || "").replaceAll("/", "\\").toLowerCase();
+}
+
+async function refreshCurrentFile({ changedPath = "", polling = false } = {}) {
+  if (!isWailsEnv || !ReadFileFunc) {
+    return;
+  }
+
+  const currentPath = filePath.value || (await GetFilePath());
+  if (!currentPath) {
+    return;
+  }
+  if (!filePath.value) {
+    filePath.value = currentPath;
+    fileName.value = (await GetFileName()) || fileName.value;
+  }
+
+  if (
+    changedPath &&
+    normalizeWindowsPath(changedPath) !== normalizeWindowsPath(currentPath)
+  ) {
+    return;
+  }
+
+  if (isCheckingCurrentFile) {
+    if (!pendingRefreshRequest) {
+      pendingRefreshRequest = { changedPath, polling };
+    }
+    return;
+  }
+
+  isCheckingCurrentFile = true;
+
   try {
-    const content = await ReadFileAndUpdateWatch(filePath.value);
-    isExternalChange.value = true;
-    markdownContent.value = content;
-    editedContent.value = content;
-    originalContent.value = content;
-    lastEditedContent = content;
-    // 重置编辑历史
-    editHistory.value = [content];
-    historyIndex.value = 0;
+    const content = await ReadFile(currentPath);
+    const diskChanged = content !== originalContent.value;
+    const localChanged = editedContent.value !== originalContent.value;
+
+    if (!diskChanged) {
+      clearFileConflict();
+    } else if (content === editedContent.value) {
+      // Both sides reached the same content, so there is no version to choose between.
+      replaceContentFromDisk(content);
+    } else if (localChanged) {
+      markFileConflict(content);
+    } else {
+      replaceContentFromDisk(content);
+
+      if (!polling) {
+        showToast("已自动加载外部修改", "success");
+      }
+    }
   } catch (e) {
     console.warn("重新加载文件失败:", e);
+    if (!polling) {
+      showToast("刷新文件失败：" + (e.message || e), "error");
+    }
   } finally {
-    isLoading.value = false;
+    isCheckingCurrentFile = false;
+
+    if (pendingRefreshRequest) {
+      const nextRequest = pendingRefreshRequest;
+      pendingRefreshRequest = null;
+      refreshCurrentFile(nextRequest);
+    }
   }
+}
+
+async function resolveFileConflictWithCurrent() {
+  if (!hasFileConflict.value || !filePath.value || isResolvingFileConflict.value) {
+    return;
+  }
+
+  isResolvingFileConflict.value = true;
+  try {
+    const contentToKeep = editedContent.value;
+    await WriteFile(filePath.value, contentToKeep);
+    replaceContentFromDisk(contentToKeep);
+    showToast("已保留当前编辑并覆盖外部版本", "success");
+  } catch (e) {
+    showToast("保存当前版本失败：" + (e.message || e), "error");
+  } finally {
+    isResolvingFileConflict.value = false;
+  }
+}
+
+async function resolveFileConflictWithExternal() {
+  if (!hasFileConflict.value || !filePath.value || isResolvingFileConflict.value) {
+    return;
+  }
+
+  isResolvingFileConflict.value = true;
+  try {
+    const latestContent = await ReadFile(filePath.value);
+    replaceContentFromDisk(latestContent);
+    showToast("已加载外部最新版本", "success");
+  } catch (e) {
+    showToast("加载外部版本失败：" + (e.message || e), "error");
+  } finally {
+    isResolvingFileConflict.value = false;
+  }
+}
+
+// 处理文件外部变更
+let fileChangeRefreshTimer = null;
+
+function handleFileChanged(changedPath) {
+  if (fileChangeRefreshTimer) {
+    clearTimeout(fileChangeRefreshTimer);
+  }
+
+  fileChangeRefreshTimer = setTimeout(() => {
+    fileChangeRefreshTimer = null;
+    refreshCurrentFile({ changedPath: String(changedPath || "") });
+  }, 180);
+}
+
+function startFilePolling() {
+  if (filePollingTimer) {
+    clearInterval(filePollingTimer);
+  }
+  filePollingTimer = setInterval(() => {
+    if (filePath.value && document.visibilityState === "visible") {
+      refreshCurrentFile({ polling: true });
+    }
+  }, 3000);
+}
+
+function handleWindowFocus() {
+  if (filePath.value) {
+    refreshCurrentFile({ polling: true });
+  }
+  syncWindowMaximizedState();
 }
 
 // 主题切换
 const themes = [
-  { id: "default", name: "默认" },
-  { id: "dark", name: "暗色" },
+  { id: "default", name: "白昼" },
+  { id: "dark", name: "暗夜" },
   { id: "elegant", name: "雅致" },
 ];
 
@@ -512,12 +959,58 @@ function setTheme(themeId) {
   currentTheme.value = themeId;
   isDark.value = themeId === "dark";
   document.documentElement.setAttribute("data-theme", themeId);
+
+  if (isWailsEnv) {
+    if (themeId === "dark") {
+      WindowSetDarkThemeFunc?.();
+      WindowSetBackgroundColourFunc?.(13, 17, 23, 255);
+    } else if (themeId === "elegant") {
+      WindowSetLightThemeFunc?.();
+      WindowSetBackgroundColourFunc?.(246, 241, 232, 255);
+    } else {
+      WindowSetLightThemeFunc?.();
+      WindowSetBackgroundColourFunc?.(255, 255, 255, 255);
+    }
+  }
 }
 
 function cycleTheme() {
   const currentIndex = themes.findIndex((t) => t.id === currentTheme.value);
   const nextIndex = (currentIndex + 1) % themes.length;
   setTheme(themes[nextIndex].id);
+}
+
+function openSettings(section = "general") {
+  settingsInitialSection.value = section === "models" ? "models" : "general";
+  showSettingsModal.value = true;
+}
+
+async function syncWindowMaximizedState() {
+  if (!WindowIsMaximisedFunc) {
+    return;
+  }
+
+  try {
+    isWindowMaximized.value = Boolean(await WindowIsMaximisedFunc());
+  } catch (e) {
+    console.warn("读取窗口状态失败:", e);
+  }
+}
+
+function minimizeWindow() {
+  WindowMinimiseFunc?.();
+}
+
+function toggleWindowMaximize(event) {
+  if (event?.target?.closest("button, input, select, textarea, a")) {
+    return;
+  }
+  WindowToggleMaximiseFunc?.();
+  window.setTimeout(syncWindowMaximizedState, 120);
+}
+
+function closeWindow() {
+  QuitFunc?.();
 }
 
 function toggleStylePanel() {
@@ -637,7 +1130,7 @@ function handleLiveEditorReady() {
 
 // 保存文件
 async function saveFile() {
-  if (!isWailsEnv || !WriteFile) {
+  if (!isWailsEnv || !WriteFileFunc || !ReadFileFunc) {
     showToast("请在桌面应用中使用此功能", "error");
     return;
   }
@@ -645,8 +1138,23 @@ async function saveFile() {
 
   isSaving.value = true;
   try {
+    const diskContent = await ReadFile(filePath.value);
+    if (diskContent !== originalContent.value) {
+      if (diskContent === editedContent.value) {
+        originalContent.value = editedContent.value;
+        clearFileConflict();
+        showToast("磁盘内容已与当前文档一致", "success");
+        return;
+      }
+
+      markFileConflict(diskContent);
+      showFileConflictModal.value = true;
+      return;
+    }
+
     await WriteFile(filePath.value, editedContent.value);
     originalContent.value = editedContent.value;
+    clearFileConflict();
     // 成功提示
     showToast("保存成功", "success");
   } catch (e) {
@@ -655,6 +1163,201 @@ async function saveFile() {
   } finally {
     isSaving.value = false;
   }
+}
+
+function stripOuterMarkdownFence(text) {
+  const trimmed = String(text || "").trim();
+  const matched = trimmed.match(/^```(?:markdown|md)?\s*([\s\S]*?)\s*```$/i);
+  return matched ? matched[1].trim() : trimmed;
+}
+
+function normalizeForContentCheck(text) {
+  return String(text || "")
+    .replace(/```[\w-]*\n?/g, "")
+    .replace(/```/g, "")
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1$2")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1$2")
+    .replace(/[`*_~#>\-|:[\](){}.,;!?，。；：！？“”‘’、\\/+=\s]/g, "")
+    .toLowerCase();
+}
+
+function isSmartFormatResultValid(original, formatted) {
+  const result = String(formatted || "").trim();
+  if (!result) {
+    return false;
+  }
+
+  if (/<!doctype|<html[\s>]|<\/body>/i.test(result)) {
+    return false;
+  }
+
+  if (/^(here is|sure[,，]|下面是|以下是).{0,80}(markdown|排版|整理)/i.test(result)) {
+    return false;
+  }
+
+  const originalToken = normalizeForContentCheck(original);
+  const formattedToken = normalizeForContentCheck(result);
+
+  if (!originalToken && !formattedToken) {
+    return true;
+  }
+
+  if (!originalToken || !formattedToken) {
+    return false;
+  }
+
+  const lengthRatio =
+    Math.min(originalToken.length, formattedToken.length) /
+    Math.max(originalToken.length, formattedToken.length);
+
+  return lengthRatio >= 0.96 && originalToken === formattedToken;
+}
+
+function applySmartFormattedContent(formattedContent) {
+  const nextContent = stripOuterMarkdownFence(formattedContent);
+  editedContent.value = nextContent;
+  markdownContent.value = nextContent;
+  lastEditedContent = nextContent;
+
+  if (
+    editHistory.value.length === 0 ||
+    editHistory.value[editHistory.value.length - 1] !== nextContent
+  ) {
+    addToHistory(nextContent);
+  }
+}
+
+function openSmartFormatPreview(originalContent, formattedContent) {
+  smartFormatOriginalContent.value = originalContent;
+  smartFormatCandidateContent.value = formattedContent;
+  showSmartFormatPreview.value = true;
+}
+
+function closeSmartFormatPreview() {
+  showSmartFormatPreview.value = false;
+}
+
+function confirmSmartFormatPreview() {
+  applySmartFormattedContent(smartFormatCandidateContent.value);
+  showSmartFormatPreview.value = false;
+  showToast("已应用智能排版结果，请确认后保存", "success");
+}
+
+function openSmartFormatFailure(message, failedModelId = "") {
+  smartFormatError.value = message;
+  smartFormatRetryModelId.value =
+    enabledSmartFormatModels.value.find((model) => model.id !== failedModelId)?.id ||
+    failedModelId ||
+    enabledSmartFormatModels.value[0]?.id ||
+    "";
+  showSmartFormatFailure.value = true;
+}
+
+function getSmartFormatModel(modelId = "") {
+  if (modelId) {
+    return enabledSmartFormatModels.value.find((model) => model.id === modelId) || null;
+  }
+
+  return activeSmartFormatModel.value;
+}
+
+function openSmartFormatPrompt() {
+  if (!isMarkdownDocument.value) {
+    showToast("智能排版仅适用于 Markdown 文档", "error");
+    return;
+  }
+
+  if (!activeSmartFormatModel.value) {
+    showToast("请先在模型配置中添加、测试并启用模型", "error");
+    openSettings("models");
+    return;
+  }
+
+  const sourceContent = editedContent.value || markdownContent.value;
+  if (!sourceContent.trim()) {
+    showToast("当前文档没有可排版内容", "error");
+    return;
+  }
+
+  showSmartFormatPrompt.value = true;
+}
+
+function confirmSmartFormatPrompt(instruction) {
+  smartFormatInstruction.value = String(instruction || "").trim().slice(0, 1000);
+  showSmartFormatPrompt.value = false;
+  smartFormatMarkdown("", smartFormatInstruction.value);
+}
+
+async function smartFormatMarkdown(modelId = "", instruction = smartFormatInstruction.value) {
+  if (!isWailsEnv || !FormatMarkdownWithAI) {
+    showToast("请在桌面应用中使用智能排版", "error");
+    return;
+  }
+
+  const model = getSmartFormatModel(modelId);
+  if (!model) {
+    showToast("请先在设置中添加并启用模型", "error");
+    openSettings("models");
+    return;
+  }
+
+  if (!model.baseUrl || !model.model) {
+    openSmartFormatFailure("当前模型缺少接口地址或模型名称，请补充后重试。", model.id);
+    return;
+  }
+
+  const sourceContent = editedContent.value || markdownContent.value;
+  if (!sourceContent.trim()) {
+    showToast("当前文档没有可排版内容", "error");
+    return;
+  }
+
+  isSmartFormatting.value = true;
+  isLoading.value = true;
+  loadingText.value = "智能排版中，请稍候...";
+
+  try {
+    const formattedContent = stripOuterMarkdownFence(
+      await FormatMarkdownWithAI({
+        markdown: sourceContent,
+        instruction: String(instruction || "").trim().slice(0, 1000),
+        model: {
+          name: model.name,
+          baseUrl: model.baseUrl,
+          apiKey: model.apiKey,
+          model: model.model,
+          timeout: model.timeout,
+          formatTimeout: model.formatTimeout,
+          headers: model.headers,
+        },
+      })
+    );
+
+    if (!isSmartFormatResultValid(sourceContent, formattedContent)) {
+      openSmartFormatFailure("模型返回内容未通过安全校验，已保留当前文档。", model.id);
+      return;
+    }
+
+    appSettings.value.activeModelId = model.id;
+    showSmartFormatFailure.value = false;
+    openSmartFormatPreview(sourceContent, formattedContent);
+  } catch (e) {
+    console.error("智能排版失败:", e);
+    openSmartFormatFailure("智能排版请求失败：" + (e.message || e), model.id);
+  } finally {
+    isSmartFormatting.value = false;
+    isLoading.value = false;
+  }
+}
+
+function retrySmartFormat() {
+  showSmartFormatFailure.value = false;
+  smartFormatMarkdown(smartFormatRetryModelId.value, smartFormatInstruction.value);
+}
+
+function openSettingsFromSmartFormatFailure() {
+  showSmartFormatFailure.value = false;
+  openSettings("models");
 }
 
 // Toast 提示
@@ -749,8 +1452,7 @@ async function loadStartupFile() {
   try {
     const startupFile = await GetStartupFile();
     if (startupFile) {
-      await loadFile(startupFile);
-      return true;
+      return await setFileWorkspace([startupFile]);
     }
   } catch (e) {
     console.warn("检查启动参数失败:", e);
@@ -821,30 +1523,25 @@ function handleKeyDown(e) {
   // Ctrl+S 保存
   if (e.ctrlKey && e.key === "s") {
     e.preventDefault();
-    if (viewMode.value !== "preview" && hasChanges.value) {
+    if (hasChanges.value) {
       saveFile();
     }
   }
   // Ctrl+Z 撤销
-  if (e.ctrlKey && e.key === "z") {
+  if (e.ctrlKey && e.key === "z" && viewMode.value === "split") {
     e.preventDefault();
-    if (viewMode.value === "split") {
-      undo();
-    }
+    undo();
   }
   // Ctrl+Y 重做
-  if (e.ctrlKey && e.key === "y") {
+  if (e.ctrlKey && e.key === "y" && viewMode.value === "split") {
     e.preventDefault();
-    if (viewMode.value === "split") {
-      redo();
-    }
+    redo();
   }
 }
 
 // 拖拽处理
 function handleDragOver(e) {
   e.preventDefault();
-  e.stopPropagation();
   if (!isDragging.value) {
     isDragging.value = true;
   }
@@ -852,7 +1549,6 @@ function handleDragOver(e) {
 
 function handleDragLeave(e) {
   e.preventDefault();
-  e.stopPropagation();
   // 检查是否真的离开了容器
   const rect = e.currentTarget.getBoundingClientRect();
   const x = e.clientX;
@@ -864,42 +1560,42 @@ function handleDragLeave(e) {
 
 async function handleDrop(e) {
   e.preventDefault();
-  e.stopPropagation();
   isDragging.value = false;
+
+  // Desktop drops are handled by Wails below, which supplies an absolute path.
+  if (isWailsEnv && OnFileDropFunc) {
+    return;
+  }
 
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    if (file.name.match(/\.(md|markdown|mdown|mkdn|mkd|mdwn)$/i)) {
-      // 使用后端加载文件，这样可以正确设置路径和监听
-      const path = file.path || file.name;
-      if (path && path !== file.name) {
-        await loadFile(path);
-      } else {
-        // 如果没有路径信息，使用 FileReader 读取
-        isLoading.value = true;
-        loadingText.value = "正在加载文档...";
-        const reader = new FileReader();
-        reader.onload = async (ev) => {
-          const content = ev.target.result;
-          markdownContent.value = content;
-          editedContent.value = content;
-          originalContent.value = content;
-          lastEditedContent = content;
-          editHistory.value = [content];
-          historyIndex.value = 0;
-          fileName.value = file.name;
-          filePath.value = "";
-          isLoading.value = false;
-        };
-        reader.onerror = () => {
-          isLoading.value = false;
-          console.error("读取文件失败");
-        };
-        reader.readAsText(file);
-      }
-    }
+    // Browser preview fallback. Desktop builds always use native absolute paths.
+    isLoading.value = true;
+    loadingText.value = "正在加载文本文件...";
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      fileName.value = file.name;
+      filePath.value = "";
+      replaceContentFromDisk(ev.target.result);
+      isLoading.value = false;
+    };
+    reader.onerror = () => {
+      isLoading.value = false;
+      showToast("无法读取该文本文件", "error");
+    };
+    reader.readAsText(file);
   }
+}
+
+async function handleNativeFileDrop(_x, _y, paths) {
+  isDragging.value = false;
+  const droppedPaths = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  if (!droppedPaths.length) {
+    showToast("未能获取拖入文件的磁盘路径", "error");
+    return;
+  }
+  await setFileWorkspace(droppedPaths);
 }
 
 function stripHtmlTags(text) {
@@ -1006,11 +1702,6 @@ function clampSplitEditorWidth(value) {
   return Math.min(splitMaxPercent, Math.max(splitMinPercent, value));
 }
 
-function readStoredSplitEditorWidth() {
-  const stored = Number(localStorage.getItem(SPLIT_WIDTH_STORAGE_KEY));
-  return Number.isFinite(stored) ? clampSplitEditorWidth(stored) : 50;
-}
-
 function startResizeSplit(e) {
   e.preventDefault();
 
@@ -1049,7 +1740,6 @@ function stopResizeSplit() {
   document.removeEventListener("mouseup", stopResizeSplit);
   document.body.style.cursor = "";
   document.body.style.userSelect = "";
-  localStorage.setItem(SPLIT_WIDTH_STORAGE_KEY, String(splitEditorWidth.value));
 }
 
 // 目录宽度拖动调整
@@ -1086,7 +1776,6 @@ function stopResizeToc() {
     if (tocSidebarEl) {
       const finalWidth = parseInt(tocSidebarEl.style.width);
       tocWidth.value = finalWidth;
-      localStorage.setItem("tocWidth", finalWidth.toString());
     }
     tocSidebarEl = null;
   }
@@ -1094,7 +1783,10 @@ function stopResizeToc() {
 
 onMounted(async () => {
   document.addEventListener("keydown", handleKeyDown);
-  setTheme("elegant");
+  window.addEventListener("focus", handleWindowFocus);
+  window.addEventListener("resize", syncWindowMaximizedState);
+  setTheme(currentTheme.value);
+  applyZoom();
 
   // 仅在 Wails 环境中执行相关操作
   if (isWailsEnv) {
@@ -1120,9 +1812,13 @@ onMounted(async () => {
     // 监听文件变更事件
     try {
       EventsOn("file-changed", handleFileChanged);
+      OnFileDrop(handleNativeFileDrop, false);
     } catch (e) {
-      console.warn("注册文件变更监听失败:", e);
+      console.warn("注册文件监听失败:", e);
     }
+
+    startFilePolling();
+    await syncWindowMaximizedState();
 
     const loaded = await loadStartupFile();
     if (!loaded) {
@@ -1136,15 +1832,26 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleKeyDown);
+  window.removeEventListener("focus", handleWindowFocus);
+  window.removeEventListener("resize", syncWindowMaximizedState);
   document.removeEventListener("mousemove", handleResizeSplit);
   document.removeEventListener("mouseup", stopResizeSplit);
   document.removeEventListener("mousemove", handleResizeToc);
   document.removeEventListener("mouseup", stopResizeToc);
   document.body.style.cursor = "";
   document.body.style.userSelect = "";
+  if (fileChangeRefreshTimer) {
+    clearTimeout(fileChangeRefreshTimer);
+    fileChangeRefreshTimer = null;
+  }
+  if (filePollingTimer) {
+    clearInterval(filePollingTimer);
+    filePollingTimer = null;
+  }
   if (isWailsEnv && EventsOff) {
     try {
       EventsOff("file-changed");
+      OnFileDropOff();
     } catch (e) {
       console.warn("取消文件变更监听失败:", e);
     }
@@ -1183,7 +1890,7 @@ onUnmounted(() => {
           <line x1="9" y1="15" x2="12" y2="12" />
           <line x1="15" y1="15" x2="12" y2="12" />
         </svg>
-        <p>释放以打开 Markdown 文件</p>
+        <p>释放以打开文本文件或目录</p>
       </div>
     </div>
 
@@ -1229,8 +1936,28 @@ onUnmounted(() => {
 
     <!-- 工具栏 -->
     <div class="toolbar">
-      <div class="toolbar-left">
-        <button class="toolbar-btn" @click="openFile" title="打开文件 (Ctrl+O)">
+      <div class="toolbar-left" @dblclick.stop>
+        <button
+          class="toolbar-btn"
+          @click="showToc = !showToc"
+          :class="{ active: showToc }"
+          title="文件与文档大纲"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="15" y2="12" />
+            <line x1="3" y1="18" x2="18" y2="18" />
+          </svg>
+          <span>导航</span>
+        </button>
+        <button class="toolbar-btn" @click="openFile" title="打开一个或多个文本文件 (Ctrl+O)">
           <svg
             width="18"
             height="18"
@@ -1245,12 +1972,7 @@ onUnmounted(() => {
           </svg>
           <span>打开</span>
         </button>
-        <button
-          class="toolbar-btn"
-          @click="showToc = !showToc"
-          :class="{ active: showToc }"
-          title="目录"
-        >
+        <button class="toolbar-btn" @click="openDirectory" title="打开文件夹">
           <svg
             width="18"
             height="18"
@@ -1259,15 +1981,14 @@ onUnmounted(() => {
             stroke="currentColor"
             stroke-width="2"
           >
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <line x1="3" y1="12" x2="15" y2="12" />
-            <line x1="3" y1="18" x2="18" y2="18" />
+            <path d="M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
+            <path d="M3 9h18" />
           </svg>
-          <span>目录</span>
+          <span>文件夹</span>
         </button>
-        <!-- 保存按钮 - 仅在编辑模式下且有改动时显示 -->
+        <!-- 保存按钮 - 只要内容有改动就显示 -->
         <button
-          v-if="viewMode !== 'preview' && hasChanges"
+          v-if="hasChanges"
           class="toolbar-btn save-btn"
           @click="saveFile"
           :disabled="isSaving"
@@ -1290,10 +2011,35 @@ onUnmounted(() => {
           <span>保存</span>
         </button>
       </div>
-      <div class="toolbar-center">
-        <span class="file-name" :title="filePath">{{ fileName }}</span>
+      <div class="toolbar-center" @dblclick="toggleWindowMaximize">
+        <div class="file-title-row">
+          <span class="file-name" :title="filePath">{{ fileName }}</span>
+          <span v-if="hasFileConflict" class="file-conflict-status">内容冲突</span>
+          <button
+            v-if="hasFileConflict"
+            class="title-conflict-action"
+            type="button"
+            title="处理当前编辑与外部文件的版本冲突"
+            aria-label="处理文件冲突"
+            @click.stop="openFileConflictResolution"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+              <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+            </svg>
+          </button>
+        </div>
       </div>
-      <div class="toolbar-right">
+      <div class="toolbar-right" @dblclick.stop>
         <!-- 缩放控制 -->
         <div class="zoom-controls">
           <button
@@ -1339,6 +2085,7 @@ onUnmounted(() => {
             </svg>
           </button>
         </div>
+        
         <!-- 视图模式切换 -->
         <div class="view-mode-tabs" role="tablist" aria-label="视图模式">
           <button
@@ -1355,6 +2102,34 @@ onUnmounted(() => {
             {{ tab.label }}
           </button>
         </div>
+
+        <button
+          class="toolbar-btn smart-format-btn"
+          type="button"
+          :disabled="isSmartFormatting || !isMarkdownDocument"
+          :title="
+            isMarkdownDocument
+              ? '使用当前模型智能整理 Markdown 排版'
+              : '智能排版仅适用于 Markdown 文档'
+          "
+          @click="openSmartFormatPrompt"
+        >
+          <span v-if="isSmartFormatting" class="loading-spinner-sm"></span>
+          <svg
+            v-else
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z" />
+            <path d="M5 17l.8 2.2L8 20l-2.2.8L5 23l-.8-2.2L2 20l2.2-.8L5 17z" />
+          </svg>
+          <span>智能排版</span>
+        </button>
+
         <!-- 主题按钮 -->
         <button
           class="toolbar-btn"
@@ -1382,6 +2157,7 @@ onUnmounted(() => {
           </svg>
           <span>样式</span>
         </button>
+
         <button
           class="toolbar-btn theme-btn"
           @click="cycleTheme"
@@ -1434,6 +2210,67 @@ onUnmounted(() => {
             themes.find((t) => t.id === currentTheme)?.name
           }}</span>
         </button>
+        <button
+          class="toolbar-btn settings-btn"
+          type="button"
+          title="设置"
+          @click="openSettings('general')"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.23.37.6.6 1 .6h.6a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.4z"
+            />
+          </svg>
+          <span>设置</span>
+        </button>
+
+        <div v-if="isWailsEnv" class="window-controls" aria-label="窗口控制">
+          <button
+            class="window-control"
+            type="button"
+            title="最小化"
+            aria-label="最小化"
+            @click="minimizeWindow"
+          >
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2 6.5h8" />
+            </svg>
+          </button>
+          <button
+            class="window-control"
+            type="button"
+            :title="isWindowMaximized ? '还原' : '最大化'"
+            :aria-label="isWindowMaximized ? '还原' : '最大化'"
+            @click="toggleWindowMaximize(null)"
+          >
+            <svg v-if="isWindowMaximized" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M3.5 4.5v-2h6v6h-2" />
+              <rect x="2.5" y="4.5" width="5" height="5" />
+            </svg>
+            <svg v-else viewBox="0 0 12 12" aria-hidden="true">
+              <rect x="2.5" y="2.5" width="7" height="7" />
+            </svg>
+          </button>
+          <button
+            class="window-control window-close"
+            type="button"
+            title="关闭"
+            aria-label="关闭"
+            @click="closeWindow"
+          >
+            <svg viewBox="0 0 12 12" aria-hidden="true">
+              <path d="m2.5 2.5 7 7m0-7-7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1442,11 +2279,45 @@ onUnmounted(() => {
       <!-- TOC 侧边栏 -->
       <div
         class="toc-sidebar"
-        v-if="showToc && tocItems.length > 0"
+        v-if="shouldShowSidebar"
         :style="{ width: tocWidth + 'px' }"
       >
-        <div class="toc-header">目录</div>
-        <div class="toc-list">
+        <div class="sidebar-tabs" role="tablist" aria-label="侧边栏内容">
+          <button
+            v-if="hasWorkspaceFiles"
+            class="sidebar-tab"
+            :class="{ active: sidebarSection === 'files' }"
+            type="button"
+            role="tab"
+            :aria-selected="sidebarSection === 'files'"
+            @click="sidebarSection = 'files'"
+          >
+            文件 <span>{{ workspaceFileCount }}</span>
+          </button>
+          <button
+            v-if="tocItems.length"
+            class="sidebar-tab"
+            :class="{ active: sidebarSection === 'outline' }"
+            type="button"
+            role="tab"
+            :aria-selected="sidebarSection === 'outline'"
+            @click="sidebarSection = 'outline'"
+          >
+            大纲 <span>{{ tocItems.length }}</span>
+          </button>
+        </div>
+
+        <div v-if="sidebarSection === 'files' && hasWorkspaceFiles" class="file-tree-panel">
+          <FileTree
+            :nodes="workspaceRoots"
+            :expanded-paths="expandedTreePaths"
+            :active-path="filePath"
+            @toggle="toggleTreePath"
+            @open="openWorkspaceFile"
+          />
+        </div>
+
+        <div v-else-if="tocItems.length" class="toc-list">
           <div
             v-for="item in tocItems"
             :key="item.id"
@@ -1477,7 +2348,7 @@ onUnmounted(() => {
               v-model="editedContent"
               @scroll="handleEditorScroll"
               @scrollend="resetSyncState"
-              placeholder="在此输入 Markdown 内容..."
+              :placeholder="editorPlaceholder"
               spellcheck="false"
             ></textarea>
           </div>
@@ -1492,14 +2363,15 @@ onUnmounted(() => {
             @scroll="handlePreviewScroll"
             @scrollend="resetSyncState"
           >
-            <div class="markdown-body" v-html="renderedHtml"></div>
+            <div v-if="isMarkdownDocument" class="markdown-body" v-html="renderedHtml"></div>
+            <pre v-else class="plain-text-preview"><code>{{ markdownContent }}</code></pre>
           </div>
         </div>
       </template>
 
       <template v-else-if="viewMode === 'live'">
         <div class="live-editor-view" ref="liveEditorRef">
-          <div class="live-editor-shell">
+          <div v-if="isMarkdownDocument" class="live-editor-shell">
             <LiveEditSurface
               v-model="editedContent"
               :placeholder="LIVE_EDIT_PLACEHOLDER"
@@ -1508,13 +2380,21 @@ onUnmounted(() => {
               @ready="handleLiveEditorReady"
             />
           </div>
+          <textarea
+            v-else
+            class="plain-text-editor"
+            v-model="editedContent"
+            :placeholder="editorPlaceholder"
+            spellcheck="false"
+          ></textarea>
         </div>
       </template>
 
       <!-- 预览模式 -->
       <template v-else>
         <div class="content-area" @scroll="handlePreviewScroll">
-          <div class="markdown-body" v-html="renderedHtml"></div>
+          <div v-if="isMarkdownDocument" class="markdown-body" v-html="renderedHtml"></div>
+          <pre v-else class="plain-text-preview standalone"><code>{{ markdownContent }}</code></pre>
         </div>
       </template>
 
@@ -1530,6 +2410,50 @@ onUnmounted(() => {
         @reset="resetPluginStyles"
       />
     </div>
+
+    <SettingsModal
+      v-if="showSettingsModal"
+      v-model:settings="appSettings"
+      :test-model="TestAIModel"
+      :initial-section="settingsInitialSection"
+      @close="showSettingsModal = false"
+    />
+
+    <FileConflictModal
+      :visible="showFileConflictModal"
+      :file-name="fileName"
+      :resolving="isResolvingFileConflict"
+      @close="showFileConflictModal = false"
+      @use-current="resolveFileConflictWithCurrent"
+      @use-external="resolveFileConflictWithExternal"
+    />
+
+    <SmartFormatPreviewModal
+      :visible="showSmartFormatPreview"
+      :original-content="smartFormatOriginalContent"
+      :formatted-content="smartFormatCandidateContent"
+      :resolve-image-path="ResolveImagePath"
+      :read-image-as-base64="ReadImageAsBase64"
+      @use="confirmSmartFormatPreview"
+      @close="closeSmartFormatPreview"
+    />
+
+    <SmartFormatPromptModal
+      :visible="showSmartFormatPrompt"
+      :initial-instruction="smartFormatInstruction"
+      @confirm="confirmSmartFormatPrompt"
+      @close="showSmartFormatPrompt = false"
+    />
+
+    <SmartFormatFailureModal
+      v-model:model-id="smartFormatRetryModelId"
+      :visible="showSmartFormatFailure"
+      :message="smartFormatError"
+      :models="enabledSmartFormatModels"
+      @retry="retrySmartFormat"
+      @close="showSmartFormatFailure = false"
+      @open-settings="openSettingsFromSmartFormatFailure"
+    />
   </div>
 </template>
 
@@ -1804,7 +2728,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 20px auto minmax(0, 1fr);
   gap: 12px;
-  align-items: start;
+  align-items: center;
   padding: 16px 18px;
   margin: 0;
   border-radius: 10px;
@@ -1885,6 +2809,7 @@ onUnmounted(() => {
 }
 [data-theme="elegant"] .markdown-body .task-list-content {
   min-width: 0;
+  margin-top: -2px;
 }
 [data-theme="elegant"] .markdown-body .task-list-item.is-pending .task-list-content {
   color: var(--viewer-task-pending-color, inherit);
@@ -1981,6 +2906,7 @@ body {
   background: var(--bg-toolbar);
   border-bottom: 1px solid var(--border-toolbar);
   flex-shrink: 0;
+  --wails-draggable: drag;
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -1989,12 +2915,22 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+  --wails-draggable: no-drag;
   -webkit-app-region: no-drag;
 }
 .toolbar-center {
   flex: 1;
-  text-align: center;
+  min-width: 70px;
   overflow: hidden;
+  --wails-draggable: drag;
+  -webkit-app-region: drag;
+}
+.file-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
 }
 .file-name {
   font-size: 13px;
@@ -2004,6 +2940,45 @@ body {
   text-overflow: ellipsis;
   max-width: 400px;
   display: inline-block;
+}
+
+.file-conflict-status {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.title-conflict-action {
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  cursor: pointer;
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.title-conflict-action:hover {
+  background: rgba(245, 158, 11, 0.22);
+}
+
+.title-conflict-action svg {
+  width: 14px;
+  height: 14px;
 }
 
 .toolbar-btn {
@@ -2018,11 +2993,16 @@ body {
   cursor: pointer;
   font-size: 12px;
   transition: all 0.15s ease;
+  --wails-draggable: no-drag;
   -webkit-app-region: no-drag;
 }
 .toolbar-btn:hover {
   background: var(--btn-hover);
   color: var(--text-primary);
+}
+.toolbar-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .toolbar-btn.active {
   background: var(--btn-active);
@@ -2111,6 +3091,82 @@ body {
 .theme-btn .theme-name {
   font-size: 12px;
   max-width: 40px;
+}
+.smart-format-btn {
+  margin-right: 8px;
+  color: var(--accent-color);
+  /* background: color-mix(in srgb, var(--accent-color) 9%, transparent); */
+}
+.smart-format-btn:hover {
+  color: #ffffff;
+  background: var(--accent-color);
+}
+.settings-btn {
+  margin-left: 2px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
+}
+
+.window-controls {
+  height: 44px;
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
+  margin-left: 4px;
+  border-left: 1px solid var(--border-toolbar);
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  width: 43px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.window-control:hover {
+  background: var(--btn-hover);
+  color: var(--text-primary);
+}
+
+.window-control.window-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.window-control svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+@media (max-width: 1120px) {
+  .toolbar-left .toolbar-btn span,
+  .smart-format-btn span:not(.loading-spinner-sm),
+  .settings-btn span,
+  .theme-name {
+    display: none;
+  }
+
+  .toolbar-btn {
+    padding-inline: 7px;
+  }
+
+  .zoom-controls,
+  .view-mode-tabs,
+  .smart-format-btn {
+    margin-right: 4px;
+  }
 }
 
 /* Loading 遮罩 */
@@ -2207,10 +3263,66 @@ body {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.sidebar-tabs {
+  min-height: 40px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 7px 8px 0;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.sidebar-tab {
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 1;
+  padding: 0 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sidebar-tab:hover {
+  color: var(--text-primary);
+  /* background: var(--bg-toc-hover); */
+}
+.sidebar-tab.active {
+  /* border-bottom-color: var(--accent-color); */
+  color: var(--accent-color);
+  font-weight: 700;
+}
+.sidebar-tab span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.file-tree-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 5px 0 10px;
+}
 .toc-list {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+.file-tree-panel,
+.toc-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 .toc-item {
   padding: 6px 16px;
@@ -2344,6 +3456,34 @@ body {
   max-height: none;
 }
 
+.plain-text-preview {
+  min-width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 20px 24px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+  font-size: var(--base-font-size, 16px);
+  line-height: 1.68;
+  tab-size: 4;
+  white-space: pre;
+}
+
+.plain-text-preview.standalone {
+  width: min(100%, var(--viewer-content-max-width, 100%));
+  margin: 0 auto;
+  padding: 0;
+}
+
+.plain-text-preview code {
+  color: inherit;
+  font: inherit;
+}
+
 .live-editor-view {
   flex: 1;
   overflow-y: auto;
@@ -2351,6 +3491,26 @@ body {
   padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
   /* background: var(--bg-primary); */
   color: var(--viewer-global-color, var(--text-primary));
+}
+
+.plain-text-editor {
+  width: min(100%, var(--viewer-content-max-width, 100%));
+  min-height: 100%;
+  display: block;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 0;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  caret-color: var(--accent-color);
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+  font-size: var(--base-font-size, 16px);
+  line-height: 1.68;
+  tab-size: 4;
+  white-space: pre;
 }
 
 .live-editor-shell {
@@ -2596,6 +3756,7 @@ body {
 }
 
 .live-editor-shell .DOMD-CheckBoxLi {
+  position: relative;
   color: var(--viewer-task-pending-color, var(--viewer-p-color, inherit));
   font-family: var(
     --viewer-task-pending-font-family,
@@ -2608,19 +3769,8 @@ body {
   font-style: var(--viewer-task-pending-font-style, var(--viewer-p-font-style, inherit));
 }
 
-.live-editor-shell .DOMD-CheckBoxLi::before {
-  content: "待执行";
-  align-self: flex-start;
-  margin-bottom: 4px;
-  border-radius: 999px;
-  padding: 0.12em 0.55em;
-  font-size: 0.78em;
-  line-height: 1.4;
-  color: var(--viewer-task-badge-pending-color, #9a3412);
-  font-family: var(--viewer-task-badge-pending-font-family, inherit);
-  font-weight: var(--viewer-task-badge-pending-font-weight, 700);
-  font-style: var(--viewer-task-badge-pending-font-style, normal);
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+.live-editor-shell .DOMD-CheckBoxLi > .DOMD-LiP {
+  min-width: 0;
 }
 
 .live-editor-shell .DOMD-CheckBoxLi:has(input[type="checkbox"]:checked) {
@@ -2639,14 +3789,6 @@ body {
 
 .live-editor-shell .DOMD-CheckBoxLi:has(input[type="checkbox"]:checked) .DOMD-LiP {
   text-decoration: line-through;
-}
-
-.live-editor-shell .DOMD-CheckBoxLi:has(input[type="checkbox"]:checked)::before {
-  content: "已完成";
-  color: var(--viewer-task-badge-complete-color, #0f766e);
-  font-family: var(--viewer-task-badge-complete-font-family, inherit);
-  font-weight: var(--viewer-task-badge-complete-font-weight, 700);
-  font-style: var(--viewer-task-badge-complete-font-style, normal);
 }
 
 .live-editor-shell img,
@@ -2722,6 +3864,7 @@ body {
 
 /* 滚动条 */
 .content-area::-webkit-scrollbar,
+.file-tree-panel::-webkit-scrollbar,
 .toc-list::-webkit-scrollbar,
 .editor::-webkit-scrollbar,
 .split-editor::-webkit-scrollbar,
@@ -2730,6 +3873,7 @@ body {
   width: 8px;
 }
 .content-area::-webkit-scrollbar-track,
+.file-tree-panel::-webkit-scrollbar-track,
 .toc-list::-webkit-scrollbar-track,
 .editor::-webkit-scrollbar-track,
 .split-editor::-webkit-scrollbar-track,
@@ -2738,6 +3882,7 @@ body {
   background: var(--scrollbar-track);
 }
 .content-area::-webkit-scrollbar-thumb,
+.file-tree-panel::-webkit-scrollbar-thumb,
 .toc-list::-webkit-scrollbar-thumb,
 .editor::-webkit-scrollbar-thumb,
 .split-editor::-webkit-scrollbar-thumb,
@@ -2747,6 +3892,7 @@ body {
   border-radius: 10px;
 }
 .content-area::-webkit-scrollbar-thumb:hover,
+.file-tree-panel::-webkit-scrollbar-thumb:hover,
 .toc-list::-webkit-scrollbar-thumb:hover,
 .live-editor-view::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
@@ -2945,7 +4091,7 @@ body {
 .markdown-body .task-list-item {
   list-style: none;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   margin: 8px 0;
 }

@@ -83,11 +83,6 @@ export const FONT_OPTIONS = [
     stack: 'Consolas, "Courier New", monospace',
   },
   {
-    value: "lxgw-wenkai",
-    label: "霞鹜文楷（自带开源）",
-    stack: '"LXGW WenKai", "KaiTi", serif',
-  },
-  {
     value: "noto-sans-sc",
     label: "Noto Sans SC（思源黑体风格）",
     stack: '"Noto Sans SC", "Microsoft YaHei", sans-serif',
@@ -101,31 +96,6 @@ export const FONT_OPTIONS = [
     value: "alibaba-puhuiti-3",
     label: "阿里巴巴普惠体 3.0（自带）",
     stack: '"Alibaba PuHuiTi 3.0", "Microsoft YaHei", sans-serif',
-  },
-  {
-    value: "alimama-shuhei",
-    label: "阿里妈妈数黑体（自带）",
-    stack: '"Alimama ShuHeiTi", "SimHei", sans-serif',
-  },
-  {
-    value: "alimama-fangyuan",
-    label: "阿里妈妈方圆体（自带）",
-    stack: '"Alimama FangYuanTi VF", "Microsoft YaHei", sans-serif',
-  },
-  {
-    value: "zcool-xiaowei",
-    label: "站酷小薇体（自带开源）",
-    stack: '"ZCOOL XiaoWei", "Noto Serif SC", "SimSun", serif',
-  },
-  {
-    value: "zcool-qingke-huangyou",
-    label: "站酷庆科黄油体（自带开源）",
-    stack: '"ZCOOL QingKe HuangYou", "Microsoft YaHei", sans-serif',
-  },
-  {
-    value: "zcool-kuaile",
-    label: "站酷快乐体（自带开源）",
-    stack: '"ZCOOL KuaiLe", "Microsoft YaHei", sans-serif',
   },
 ];
 

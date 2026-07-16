@@ -1,6 +1,8 @@
 import alibabaPuHuiRegularUrl from "@fontpkg/alibaba-pu-hui-ti-3-0/AlibabaPuHuiTi-3-55-Regular.ttf";
-import alimamaShuHeiUrl from "@fontpkg/alimama-shu-hei-ti/AlimamaShuHeiTi-Bold.woff2";
-import alimamaFangYuanUrl from "@fontpkg/alimama-fang-yuan-ti-vf/AlimamaFangYuanTiVF-Thin.woff2";
+import notoSansScRegularUrl from "@fontsource/noto-sans-sc/files/noto-sans-sc-chinese-simplified-400-normal.woff2";
+import notoSansScBoldUrl from "@fontsource/noto-sans-sc/files/noto-sans-sc-chinese-simplified-700-normal.woff2";
+import notoSerifScRegularUrl from "@fontsource/noto-serif-sc/files/noto-serif-sc-chinese-simplified-400-normal.woff2";
+import notoSerifScBoldUrl from "@fontsource/noto-serif-sc/files/noto-serif-sc-chinese-simplified-700-normal.woff2";
 
 const FONT_STYLE_ELEMENT_ID = "md-viewer-bundled-font-faces";
 
@@ -25,19 +27,35 @@ export function registerBundledFontFaces() {
     }
 
     @font-face {
-      font-family: "Alimama ShuHeiTi";
+      font-family: "Noto Sans SC";
       font-style: normal;
-      font-weight: 700;
+      font-weight: 400;
       font-display: swap;
-      src: url("${alimamaShuHeiUrl}") format("woff2");
+      src: url("${notoSansScRegularUrl}") format("woff2");
     }
 
     @font-face {
-      font-family: "Alimama FangYuanTi VF";
+      font-family: "Noto Sans SC";
       font-style: normal;
-      font-weight: 100 900;
+      font-weight: 700;
       font-display: swap;
-      src: url("${alimamaFangYuanUrl}") format("woff2");
+      src: url("${notoSansScBoldUrl}") format("woff2");
+    }
+
+    @font-face {
+      font-family: "Noto Serif SC";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("${notoSerifScRegularUrl}") format("woff2");
+    }
+
+    @font-face {
+      font-family: "Noto Serif SC";
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: url("${notoSerifScBoldUrl}") format("woff2");
     }
   `;
 

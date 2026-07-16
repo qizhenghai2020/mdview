@@ -552,7 +552,15 @@ function getColorInputValue(color) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 14px 22px;
+  padding: 14px;
+  scrollbar-width: none;
+}
+
+.panel-scroll::-webkit-scrollbar {
+  width: 0px;      /* 设置宽度为 0 */
+  height: 0px;     /* 设置高度为 0 (水平滚动条) */
+  background: transparent; /* 可选，确保透明 */
+  display: none;   /* 或者使用 display:none 彻底移除 */
 }
 
 .control-section + .control-section {
