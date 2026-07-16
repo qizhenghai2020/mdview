@@ -9,6 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontpkg/alibaba-pu-hui-ti-3-0": "^3.1.2",
+    "@fontpkg/alimama-fang-yuan-ti-vf": "^1.0.5",
+    "@fontpkg/alimama-shu-hei-ti": "^1.0.5",
+    "@fontsource/lxgw-wenkai": "^5.2.5",
+    "@fontsource/noto-sans-sc": "^5.2.9",
+    "@fontsource/noto-serif-sc": "^5.2.9",
+    "@fontsource/zcool-kuaile": "^5.2.8",
+    "@fontsource/zcool-qingke-huangyou": "^5.2.8",
+    "@fontsource/zcool-xiaowei": "^5.2.8",
     "github-markdown-css": "^5.9.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.6",

@@ -3,6 +3,8 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { marked } from "marked";
 import hljs from "highlight.js";
 import mermaid from "mermaid";
+import StyleConfigPanel from "./style-config/StyleConfigPanel.vue";
+import { useStyleConfigPlugin } from "./style-config/useStyleConfigPlugin";
 
 // 检测是否在 Wails 环境中运行
 const isWailsEnv = typeof window !== "undefined" && window.go && window.go.main;
@@ -109,6 +111,15 @@ const tocWidth = ref(parseInt(localStorage.getItem("tocWidth")) || 240);
 const isResizingToc = ref(false);
 const tocMinWidth = 120;
 const tocMaxWidth = 500;
+
+const {
+  styleConfig,
+  panelState: stylePanelState,
+  effectiveMetrics: styleConfigMetrics,
+  styleConfigVars,
+  hasCustomStyleConfig,
+  resetStyleConfig,
+} = useStyleConfigPlugin(currentTheme, zoomLevel);
 
 // 初始化 Mermaid
 mermaid.initialize({
@@ -261,13 +272,74 @@ renderer.heading = function ({ tokens, depth }) {
   return `<h${depth} id="${id}">${text}</h${depth}>`;
 };
 
+function enhanceTaskListHtml(html) {
+  if (typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div class="markdown-root">${html}</div>`, "text/html");
+  const root = doc.body.firstElementChild;
+
+  if (!root) {
+    return html;
+  }
+
+  const listItems = root.querySelectorAll("li");
+
+  listItems.forEach((item) => {
+    const directCheckbox = Array.from(item.children).find((child) => {
+      return child.tagName === "INPUT" && child.getAttribute("type") === "checkbox";
+    });
+
+    if (!directCheckbox) {
+      return;
+    }
+
+    const isComplete = directCheckbox.hasAttribute("checked");
+    const parentList = item.parentElement;
+
+    item.classList.add("task-list-item");
+    item.classList.add(isComplete ? "is-complete" : "is-pending");
+    item.setAttribute("data-task-state", isComplete ? "complete" : "pending");
+    directCheckbox.classList.add("task-list-checkbox");
+    directCheckbox.setAttribute("aria-hidden", "true");
+
+    if (parentList && (parentList.tagName === "UL" || parentList.tagName === "OL")) {
+      parentList.classList.add("task-list");
+    }
+
+    const statusBadge = doc.createElement("span");
+    statusBadge.className = "task-status-badge";
+    statusBadge.textContent = isComplete ? "已完成" : "待执行";
+
+    const content = doc.createElement("div");
+    content.className = "task-list-content";
+
+    const nodesToMove = Array.from(item.childNodes).filter((node) => node !== directCheckbox);
+    nodesToMove.forEach((node) => {
+      content.appendChild(node);
+    });
+
+    const firstNode = content.firstChild;
+    if (firstNode && firstNode.nodeType === Node.TEXT_NODE) {
+      firstNode.textContent = firstNode.textContent.replace(/^\s+/, "");
+    }
+
+    item.appendChild(statusBadge);
+    item.appendChild(content);
+  });
+
+  return root.innerHTML;
+}
+
 // 渲染 Markdown
 async function renderMarkdown() {
   headings = [];
   headingCounter = {};
   mermaidIdCounter.value = 0;
   const html = marked(markdownContent.value, { renderer });
-  renderedHtml.value = html;
+  renderedHtml.value = enhanceTaskListHtml(html);
   tocItems.value = [...headings];
 
   // 渲染 Mermaid 图表
@@ -436,6 +508,16 @@ function cycleTheme() {
   const currentIndex = themes.findIndex((t) => t.id === currentTheme.value);
   const nextIndex = (currentIndex + 1) % themes.length;
   setTheme(themes[nextIndex].id);
+}
+
+function toggleStylePanel() {
+  stylePanelState.value.visible = !stylePanelState.value.visible;
+  stylePanelState.value.visibilityTouched = true;
+}
+
+function resetPluginStyles() {
+  resetStyleConfig();
+  showToast("样式配置已恢复为主题默认值", "success");
 }
 
 // 视图模式切换 - 只有两种模式：预览和分屏编辑
@@ -679,6 +761,12 @@ function showWelcome() {
 - **图表支持**：Mermaid、Flowchart 等图表渲染
 - **主题切换**：默认、暗色、雅致三种主题
 
+## 计划任务
+- [ ] 整理需求
+- [ ] 联调接口
+- [x] 修复目录高度问题
+- [x] 补一轮自测
+
 ## 图表示例
 
 ### Mermaid 流程图
@@ -876,7 +964,8 @@ function startResizeToc(e) {
 
 function handleResizeToc(e) {
   if (!isResizingToc.value || !tocSidebarEl) return;
-  const newWidth = e.clientX;
+  const rect = tocSidebarEl.getBoundingClientRect();
+  const newWidth = e.clientX - rect.left;
   if (newWidth >= tocMinWidth && newWidth <= tocMaxWidth) {
     // 直接操作 DOM 实现即时响应
     tocSidebarEl.style.width = newWidth + "px";
@@ -960,6 +1049,7 @@ onUnmounted(() => {
   <div
     class="app-container"
     :class="{ dark: isDark, dragging: isDragging, 'split-mode': viewMode === 'split' }"
+    :style="styleConfigVars"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
     @drop="handleDrop"
@@ -1195,6 +1285,32 @@ onUnmounted(() => {
         </button>
         <!-- 主题按钮 -->
         <button
+          class="toolbar-btn"
+          @click="toggleStylePanel"
+          :class="{ active: stylePanelState.visible }"
+          title="样式配置"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="4" y1="21" x2="4" y2="14" />
+            <line x1="4" y1="10" x2="4" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12" y2="3" />
+            <line x1="20" y1="21" x2="20" y2="16" />
+            <line x1="20" y1="12" x2="20" y2="3" />
+            <line x1="1" y1="14" x2="7" y2="14" />
+            <line x1="9" y1="8" x2="15" y2="8" />
+            <line x1="17" y1="16" x2="23" y2="16" />
+          </svg>
+          <span>样式</span>
+        </button>
+        <button
           class="toolbar-btn theme-btn"
           @click="cycleTheme"
           :title="'主题: ' + themes.find((t) => t.id === currentTheme)?.name"
@@ -1304,6 +1420,18 @@ onUnmounted(() => {
           <div class="markdown-body" v-html="renderedHtml"></div>
         </div>
       </template>
+
+      <StyleConfigPanel
+        v-if="stylePanelState.visible"
+        v-model:config="styleConfig"
+        v-model:panel-state="stylePanelState"
+        :current-theme="currentTheme"
+        :themes="themes"
+        :effective-metrics="styleConfigMetrics"
+        :show-reset="hasCustomStyleConfig"
+        @theme-change="setTheme"
+        @reset="resetPluginStyles"
+      />
     </div>
   </div>
 </template>
@@ -1416,6 +1544,9 @@ onUnmounted(() => {
   background: var(--bg-toolbar);
   box-shadow: var(--shadow-sm);
 }
+[data-theme="elegant"] .main-content {
+  align-items: flex-start;
+}
 [data-theme="elegant"] .toc-sidebar {
   background: var(--bg-toc);
   border: 1px solid var(--border-color);
@@ -1423,6 +1554,9 @@ onUnmounted(() => {
   box-shadow: var(--shadow-sm);
   border-radius: 10px;
   overflow: hidden;
+  align-self: flex-start;
+  height: auto;
+  max-height: calc(100% - 24px);
 }
 [data-theme="elegant"] .toc-header {
   border-bottom-color: var(--border-color);
@@ -1436,30 +1570,35 @@ onUnmounted(() => {
   color: var(--accent-color);
 }
 [data-theme="elegant"] .content-area {
-  padding: 20px;
+  padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
 }
 [data-theme="elegant"] .split-preview {
-  padding: 24px 32px;
+  padding: var(--viewer-split-padding-y, 24px) var(--viewer-split-padding-x, 32px);
 }
 [data-theme="elegant"] .markdown-body {
-  font-family: var(--font-body);
+  font-family: var(--viewer-global-font-family, var(--font-body, inherit));
   line-height: 1.8;
   margin: 0 auto;
 }
-[data-theme="elegant"] .markdown-body h1,
-[data-theme="elegant"] .markdown-body h2,
-[data-theme="elegant"] .markdown-body h3,
-[data-theme="elegant"] .markdown-body h4 {
-  font-family: var(--font-display);
-  font-weight: 600;
-}
 [data-theme="elegant"] .markdown-body h1 {
-  font-size: clamp(1.8rem, 3vw, 2.6rem);
+  font-family: var(--viewer-h1-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-weight: var(--viewer-h1-font-weight, 600);
+  font-size: var(--viewer-h1-font-size, clamp(1.8rem, 3vw, 2.6rem));
   border-bottom: 1px solid var(--border-color);
 }
 [data-theme="elegant"] .markdown-body h2 {
-  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-family: var(--viewer-h2-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-weight: var(--viewer-h2-font-weight, 600);
+  font-size: var(--viewer-h2-font-size, clamp(1.4rem, 2vw, 1.8rem));
   border-bottom: 1px solid var(--border-color);
+}
+[data-theme="elegant"] .markdown-body h3 {
+  font-family: var(--viewer-h3-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-weight: var(--viewer-h3-font-weight, 600);
+}
+[data-theme="elegant"] .markdown-body h4 {
+  font-family: var(--viewer-h4-font-family, var(--viewer-global-font-family, var(--font-display)));
+  font-weight: var(--viewer-h4-font-weight, 600);
 }
 [data-theme="elegant"] .markdown-body code {
   background: rgba(15, 23, 42, 0.06);
@@ -1538,6 +1677,131 @@ onUnmounted(() => {
 [data-theme="elegant"] .markdown-body hr {
   margin: 24px auto;
   max-width: 80%;
+}
+[data-theme="elegant"] .markdown-body .task-list {
+  margin: 20px 0;
+  padding-left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+[data-theme="elegant"] .markdown-body .task-list-item {
+  display: grid;
+  grid-template-columns: 20px auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 16px 18px;
+  margin: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(22, 22, 22, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 12px 28px rgba(22, 22, 22, 0.05);
+  backdrop-filter: blur(10px);
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-pending {
+  border-color: rgba(180, 83, 9, 0.18);
+  background:
+    linear-gradient(90deg, rgba(180, 83, 9, 0.12), rgba(180, 83, 9, 0) 20%),
+    rgba(255, 255, 255, 0.84);
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-complete {
+  border-color: rgba(15, 118, 110, 0.18);
+  background:
+    linear-gradient(90deg, rgba(15, 118, 110, 0.12), rgba(15, 118, 110, 0) 20%),
+    rgba(255, 255, 255, 0.82);
+}
+[data-theme="elegant"] .markdown-body .task-list-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 118, 110, 0.35);
+  background: rgba(255, 255, 255, 0.95);
+  position: relative;
+  flex-shrink: 0;
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-pending .task-list-checkbox {
+  border-color: rgba(180, 83, 9, 0.35);
+}
+[data-theme="elegant"] .markdown-body .task-list-checkbox[checked] {
+  background: linear-gradient(135deg, #0f766e, #14b8a6);
+  border-color: #0f766e;
+}
+[data-theme="elegant"] .markdown-body .task-list-checkbox::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  opacity: 0;
+}
+[data-theme="elegant"] .markdown-body .task-list-checkbox[checked]::after {
+  opacity: 1;
+}
+[data-theme="elegant"] .markdown-body .task-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-pending .task-status-badge {
+  color: var(--viewer-task-badge-pending-color, #9a3412);
+  font-family: var(--viewer-task-badge-pending-font-family, inherit);
+  font-weight: var(--viewer-task-badge-pending-font-weight, 700);
+  font-style: var(--viewer-task-badge-pending-font-style, normal);
+  background: rgba(180, 83, 9, 0.12);
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-complete .task-status-badge {
+  color: var(--viewer-task-badge-complete-color, #0f766e);
+  font-family: var(--viewer-task-badge-complete-font-family, inherit);
+  font-weight: var(--viewer-task-badge-complete-font-weight, 700);
+  font-style: var(--viewer-task-badge-complete-font-style, normal);
+  background: rgba(15, 118, 110, 0.12);
+}
+[data-theme="elegant"] .markdown-body .task-list-content {
+  min-width: 0;
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-pending .task-list-content {
+  color: var(--viewer-task-pending-color, inherit);
+  font-family: var(--viewer-task-pending-font-family, inherit);
+  font-weight: var(--viewer-task-pending-font-weight, inherit);
+  font-style: var(--viewer-task-pending-font-style, inherit);
+}
+[data-theme="elegant"] .markdown-body .task-list-content > :first-child {
+  margin-top: 0;
+}
+[data-theme="elegant"] .markdown-body .task-list-content > :last-child {
+  margin-bottom: 0;
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-complete .task-list-content {
+  color: var(--viewer-task-complete-color, var(--text-secondary));
+  font-family: var(--viewer-task-complete-font-family, inherit);
+  font-weight: var(--viewer-task-complete-font-weight, inherit);
+  font-style: var(--viewer-task-complete-font-style, inherit);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: rgba(15, 118, 110, 0.35);
+}
+[data-theme="elegant"] .markdown-body .task-list-item.is-complete .task-list-content a {
+  color: var(--viewer-task-complete-color, #0f766e);
+}
+[data-theme="elegant"] .markdown-body .task-list-content > ul,
+[data-theme="elegant"] .markdown-body .task-list-content > ol {
+  margin-top: 10px;
+  margin-left: 1.2em;
 }
 
 * {
@@ -1780,7 +2044,7 @@ body {
 .main-content {
   flex: 1;
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   overflow: hidden;
   min-height: 0;
   contain: layout;
@@ -1790,13 +2054,15 @@ body {
   position: relative;
   min-width: 120px;
   max-width: 600px;
-  height: auto;
+  height: 100%;
   background: var(--bg-toc);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  max-height: calc(100vh - 44px - 30px);
+  align-self: stretch;
+  min-height: 0;
+  max-height: none;
 }
 .toc-header {
   padding: 12px 16px;
@@ -1908,7 +2174,7 @@ body {
 .split-preview {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 24px;
+  padding: var(--viewer-split-padding-y, 20px) var(--viewer-split-padding-x, 24px);
   max-height: calc(100vh - 44px);
 }
 
@@ -1973,7 +2239,7 @@ body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px;
+  padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
   min-width: 0;
   height: calc(100vh - 44px);
 }
@@ -2009,12 +2275,16 @@ body {
 /* Markdown 样式 */
 .markdown-body {
   margin: 0 auto;
-  font-size: var(--base-font-size, 16px);
+  width: min(100%, var(--viewer-content-max-width, 100%));
+  max-width: 100%;
+  font-size: var(--viewer-body-font-size, var(--base-font-size, 16px));
   line-height: 1.7;
-  color: var(--text-primary);
+  color: var(--viewer-global-color, var(--text-primary));
+  font-family: var(--viewer-global-font-family, inherit);
+  font-weight: var(--viewer-global-font-weight, inherit);
+  font-style: var(--viewer-global-font-style, inherit);
   word-wrap: break-word;
   overflow-wrap: break-word;
-  max-width: 100%;
 }
 .markdown-body h1,
 .markdown-body h2,
@@ -2024,39 +2294,67 @@ body {
 .markdown-body h6 {
   margin-top: 24px;
   margin-bottom: 16px;
-  font-weight: 600;
   line-height: 1.3;
-  color: var(--text-primary);
   scroll-margin-top: 20px;
 }
 .markdown-body h1 {
-  font-size: 2em;
+  font-size: var(--viewer-h1-font-size, 2em);
+  color: var(--viewer-h1-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h1-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h1-font-weight, 600);
+  font-style: var(--viewer-h1-font-style, normal);
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 0.3em;
 }
 .markdown-body h2 {
-  font-size: 1.5em;
+  font-size: var(--viewer-h2-font-size, 1.5em);
+  color: var(--viewer-h2-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h2-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h2-font-weight, 600);
+  font-style: var(--viewer-h2-font-style, normal);
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 0.3em;
 }
 .markdown-body h3 {
-  font-size: 1.25em;
+  font-size: var(--viewer-h3-font-size, 1.25em);
+  color: var(--viewer-h3-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h3-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h3-font-weight, 600);
+  font-style: var(--viewer-h3-font-style, normal);
 }
 .markdown-body h4 {
-  font-size: 1em;
+  font-size: var(--viewer-h4-font-size, 1em);
+  color: var(--viewer-h4-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h4-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h4-font-weight, 600);
+  font-style: var(--viewer-h4-font-style, normal);
 }
 .markdown-body h5 {
-  font-size: 0.875em;
+  font-size: var(--viewer-h5-font-size, 0.875em);
+  color: var(--viewer-h5-color, var(--viewer-global-color, var(--text-primary)));
+  font-family: var(--viewer-h5-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h5-font-weight, 600);
+  font-style: var(--viewer-h5-font-style, normal);
 }
 .markdown-body h6 {
-  font-size: 0.85em;
-  color: var(--text-secondary);
+  font-size: var(--viewer-h6-font-size, 0.85em);
+  color: var(--viewer-h6-color, var(--viewer-global-color, var(--text-secondary)));
+  font-family: var(--viewer-h6-font-family, var(--viewer-global-font-family, inherit));
+  font-weight: var(--viewer-h6-font-weight, 600);
+  font-style: var(--viewer-h6-font-style, normal);
 }
 .markdown-body p {
   margin-bottom: 16px;
+  color: var(--viewer-p-color, inherit);
+  font-family: var(--viewer-p-font-family, inherit);
+  font-weight: var(--viewer-p-font-weight, inherit);
+  font-style: var(--viewer-p-font-style, inherit);
 }
 .markdown-body a {
-  color: var(--accent-color);
+  color: var(--viewer-a-color, var(--accent-color));
+  font-family: var(--viewer-a-font-family, inherit);
+  font-weight: var(--viewer-a-font-weight, inherit);
+  font-style: var(--viewer-a-font-style, inherit);
   text-decoration: none;
 }
 .markdown-body a:hover {
@@ -2064,7 +2362,16 @@ body {
   color: var(--accent-hover);
 }
 .markdown-body strong {
-  font-weight: 600;
+  color: var(--viewer-strong-color, inherit);
+  font-family: var(--viewer-strong-font-family, inherit);
+  font-weight: var(--viewer-strong-font-weight, 600);
+  font-style: var(--viewer-strong-font-style, inherit);
+}
+.markdown-body em {
+  color: var(--viewer-em-color, inherit);
+  font-family: var(--viewer-em-font-family, inherit);
+  font-weight: var(--viewer-em-font-weight, inherit);
+  font-style: var(--viewer-em-font-style, italic);
 }
 .markdown-body blockquote {
   padding: 0 1em;
@@ -2149,6 +2456,35 @@ body {
 }
 .markdown-body li + li {
   margin-top: 4px;
+}
+.markdown-body .task-list {
+  padding-left: 0;
+  margin-left: 0;
+}
+.markdown-body .task-list-item {
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 8px 0;
+}
+.markdown-body .task-list-checkbox {
+  margin-top: 0.3em;
+  flex-shrink: 0;
+  accent-color: var(--accent-color);
+}
+.markdown-body .task-status-badge {
+  display: none;
+}
+.markdown-body .task-list-content {
+  flex: 1;
+  min-width: 0;
+}
+.markdown-body .task-list-content > :first-child {
+  margin-top: 0;
+}
+.markdown-body .task-list-content > :last-child {
+  margin-bottom: 0;
 }
 
 /* 图表样式 */

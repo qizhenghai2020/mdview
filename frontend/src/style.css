@@ -1,3 +1,12 @@
+@import "@fontsource/lxgw-wenkai/500.css";
+@import "@fontsource/noto-sans-sc/chinese-simplified-400.css";
+@import "@fontsource/noto-sans-sc/chinese-simplified-700.css";
+@import "@fontsource/noto-serif-sc/chinese-simplified-400.css";
+@import "@fontsource/noto-serif-sc/chinese-simplified-700.css";
+@import "@fontsource/zcool-kuaile/chinese-simplified-400.css";
+@import "@fontsource/zcool-qingke-huangyou/chinese-simplified-400.css";
+@import "@fontsource/zcool-xiaowei/chinese-simplified-400.css";
+
 /* 全局样式重置 */
 * {
   margin: 0;
