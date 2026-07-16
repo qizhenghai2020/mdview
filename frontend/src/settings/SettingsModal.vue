@@ -13,9 +13,13 @@ const props = defineProps({
     type: String,
     default: "general",
   },
+  browserZoomLevel: {
+    type: Number,
+    default: 100,
+  },
 });
 
-const emit = defineEmits(["close"]);
+const emit = defineEmits(["close", "reset-browser-zoom"]);
 
 const SETTINGS_SECTIONS = new Set(["general", "models", "about"]);
 
@@ -31,6 +35,7 @@ const persistenceOptions = [
   { key: "theme", label: "主题" },
   { key: "zoom", label: "右上角缩放" },
   { key: "viewMode", label: "预览 / 编辑 / 分栏模式" },
+  { key: "showToc", label: "左侧导航开启/关闭" },
   { key: "tocWidth", label: "左侧目录宽度" },
   { key: "splitWidth", label: "分栏编辑宽度" },
 ];
@@ -335,7 +340,6 @@ function close() {
             <div class="settings-section-heading">
               <div>
                 <h3>常规配置</h3>
-                <p>持久化配置信息</p>
               </div>
             </div>
 
@@ -353,6 +357,26 @@ function close() {
                   <input v-model="settings.persistence[option.key]" type="checkbox" />
                   <span class="switch-track"></span>
                 </label>
+              </div>
+            </div>
+
+            <div class="browser-zoom-card">
+              <div class="browser-zoom-copy">
+                <strong>浏览器缩放</strong>
+                <span>
+                  还原整个软件界面的浏览器缩放。也可以按住 Ctrl + 鼠标滚轮缩放；这不是右上角的正文内容缩放。
+                </span>
+              </div>
+              <div class="browser-zoom-actions">
+                <span>{{ props.browserZoomLevel }}%</span>
+                <button
+                  class="settings-secondary-btn"
+                  type="button"
+                  :disabled="props.browserZoomLevel === 100"
+                  @click="emit('reset-browser-zoom')"
+                >
+                  还原 100%
+                </button>
               </div>
             </div>
           </template>
@@ -770,6 +794,52 @@ function close() {
   border: 1px solid var(--border-color);
   border-radius: 13px;
   background: var(--bg-toolbar);
+}
+
+.browser-zoom-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 13px;
+  background: var(--bg-toolbar);
+}
+
+.browser-zoom-copy {
+  min-width: 0;
+}
+
+.browser-zoom-copy strong,
+.browser-zoom-copy span {
+  display: block;
+}
+
+.browser-zoom-copy span {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.browser-zoom-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.browser-zoom-actions > span {
+  min-width: 48px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  color: var(--accent-color);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .about-card {

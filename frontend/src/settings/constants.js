@@ -4,6 +4,7 @@ export const DEFAULT_PERSISTENCE = {
   theme: true,
   zoom: true,
   viewMode: true,
+  showToc: true,
   tocWidth: true,
   splitWidth: true,
 };
@@ -13,6 +14,7 @@ export const DEFAULT_APP_SETTINGS = {
   theme: "elegant",
   zoom: 100,
   viewMode: "preview",
+  showToc: true,
   tocWidth: 240,
   splitWidth: 50,
   models: [],
@@ -25,6 +27,7 @@ export const PREFERENCE_DEFAULTS = {
   theme: DEFAULT_APP_SETTINGS.theme,
   zoom: DEFAULT_APP_SETTINGS.zoom,
   viewMode: DEFAULT_APP_SETTINGS.viewMode,
+  showToc: DEFAULT_APP_SETTINGS.showToc,
   tocWidth: DEFAULT_APP_SETTINGS.tocWidth,
   splitWidth: DEFAULT_APP_SETTINGS.splitWidth,
 };

@@ -4,6 +4,7 @@ import { marked } from "marked";
 import hljs from "highlight.js";
 import mermaid from "mermaid";
 import StyleConfigPanel from "./style-config/StyleConfigPanel.vue";
+import SmartThemePromptModal from "./style-config/SmartThemePromptModal.vue";
 import LiveEditSurface from "./live-edit/LiveEditSurface.vue";
 import { useStyleConfigPlugin } from "./style-config/useStyleConfigPlugin";
 import SettingsModal from "./settings/SettingsModal.vue";
@@ -14,6 +15,14 @@ import SmartFormatPromptModal from "./ai/SmartFormatPromptModal.vue";
 import SmartFormatPreviewModal from "./ai/SmartFormatPreviewModal.vue";
 import FileConflictModal from "./file-sync/FileConflictModal.vue";
 import FileTree from "./file-explorer/FileTree.vue";
+import {
+  createSmartThemeFromAI,
+  createSmartThemeStyleSheet,
+  getSmartThemeWindowColor,
+  isSmartThemeId,
+  loadSmartThemes,
+  saveSmartThemes,
+} from "./style-config/smartThemes";
 
 // 检测是否在 Wails 环境中运行
 const isWailsEnv = typeof window !== "undefined" && window.go && window.go.main;
@@ -43,6 +52,7 @@ let OpenFileDialogFunc,
   ReadFileAndUpdateWatchFunc,
   WriteFileFunc,
   FormatMarkdownWithAIFunc,
+  GenerateThemeWithAIFunc,
   TestAIModelFunc;
 
 if (isWailsEnv) {
@@ -71,6 +81,7 @@ if (isWailsEnv) {
     ReadFileAndUpdateWatchFunc = window.go.main.App.ReadFileAndUpdateWatch;
     WriteFileFunc = window.go.main.App.WriteFile;
     FormatMarkdownWithAIFunc = window.go.main.App.FormatMarkdownWithAI;
+    GenerateThemeWithAIFunc = window.go.main.App.GenerateThemeWithAI;
     TestAIModelFunc = window.go.main.App.TestAIModel;
   } catch (e) {
     console.warn("加载 Wails API 失败:", e);
@@ -129,6 +140,10 @@ function WriteFile(path, content) {
 function FormatMarkdownWithAI(request) {
   if (FormatMarkdownWithAIFunc) return FormatMarkdownWithAIFunc(request);
 }
+function GenerateThemeWithAI(request) {
+  if (GenerateThemeWithAIFunc) return GenerateThemeWithAIFunc(request);
+  return Promise.reject(new Error("请在桌面应用中生成智能主题"));
+}
 function TestAIModel(model) {
   if (TestAIModelFunc) return TestAIModelFunc(model);
   return Promise.reject(new Error("请在桌面应用中测试模型"));
@@ -153,11 +168,12 @@ const workspaceFileCount = ref(0);
 const expandedTreePaths = ref(new Set());
 const sidebarSection = ref("outline");
 const isDark = ref(false);
-const showToc = ref(true);
+const showToc = ref(readPreference("showToc"));
 const tocItems = ref([]);
 const activeTocId = ref("");
 const isDragging = ref(false);
 const zoomLevel = ref(readPreference("zoom"));
+const browserZoomLevel = ref(100);
 const currentTheme = ref(readPreference("theme"));
 const viewMode = ref(readPreference("viewMode")); // 'preview' | 'split' | 'live'
 const editorRef = ref(null);
@@ -182,11 +198,19 @@ const isSmartFormatting = ref(false);
 const showSmartFormatFailure = ref(false);
 const showSmartFormatPrompt = ref(false);
 const showSmartFormatPreview = ref(false);
+const showSmartThemePrompt = ref(false);
+const isGeneratingSmartTheme = ref(false);
 const smartFormatError = ref("");
 const smartFormatRetryModelId = ref("");
 const smartFormatOriginalContent = ref("");
 const smartFormatCandidateContent = ref("");
 const smartFormatInstruction = ref("");
+const smartThemePrompt = ref("");
+const imageBase64Cache = new Map();
+const MAX_IMAGE_BASE64_LENGTH = 5 * 1024 * 1024;
+const MAX_IMAGE_BASE64_CACHE_ENTRIES = 48;
+let imageProcessingToken = 0;
+const smartThemes = ref(loadSmartThemes());
 const MARKDOWN_EXTENSIONS = new Set([
   ".md",
   ".markdown",
@@ -237,6 +261,17 @@ const {
   resetStyleConfig,
 } = useStyleConfigPlugin(currentTheme, zoomLevel);
 
+const appContainerStyle = computed(() => {
+  const scale = browserZoomLevel.value / 100;
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+
+  return {
+    ...styleConfigVars.value,
+    "--browser-zoom-scale": String(safeScale),
+    "--browser-zoom-size": `${100 / safeScale}%`,
+  };
+});
+
 const enabledSmartFormatModels = computed(() =>
   appSettings.value.models.filter(
     (model) => model.enabled && model.verified && model.testStatus === "passed"
@@ -264,6 +299,7 @@ function syncEnabledPreferences() {
     theme: currentTheme.value,
     zoom: zoomLevel.value,
     viewMode: viewMode.value,
+    showToc: showToc.value,
     tocWidth: tocWidth.value,
     splitWidth: splitEditorWidth.value,
   };
@@ -288,6 +324,7 @@ watch(
 watch(currentTheme, (value) => persistPreference("theme", value));
 watch(zoomLevel, (value) => persistPreference("zoom", value));
 watch(viewMode, (value) => persistPreference("viewMode", value));
+watch(showToc, (value) => persistPreference("showToc", value));
 watch(tocWidth, (value) => persistPreference("tocWidth", value));
 watch(splitEditorWidth, (value) => persistPreference("splitWidth", value));
 
@@ -565,17 +602,15 @@ watch(
   }
 );
 
-// 分屏模式下渲染完成后处理图片
-watch(renderedHtml, () => {
-  processImagePaths();
-});
-
 // 判断是否有未保存的修改
 const hasChanges = computed(() => {
   return editedContent.value !== originalContent.value;
 });
 
 const hasFileConflict = computed(() => externalConflictContent.value !== null);
+const hasDocumentContent = computed(() =>
+  Boolean((editedContent.value || markdownContent.value || "").trim())
+);
 
 // 添加编辑历史记录
 function addToHistory(content) {
@@ -949,22 +984,72 @@ function handleWindowFocus() {
 }
 
 // 主题切换
-const themes = [
+const builtInThemes = [
   { id: "default", name: "白昼" },
   { id: "dark", name: "暗夜" },
   { id: "elegant", name: "雅致" },
 ];
 
+const themes = computed(() => [
+  ...builtInThemes,
+  ...smartThemes.value.map((theme) => ({
+    id: theme.id,
+    name: theme.name,
+  })),
+]);
+
+let smartThemeStyleElement = null;
+
+function getSmartTheme(themeId) {
+  return smartThemes.value.find((theme) => theme.id === themeId) || null;
+}
+
+function syncSmartThemeStyles() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  if (!smartThemeStyleElement) {
+    smartThemeStyleElement = document.getElementById("smart-theme-style");
+    if (!smartThemeStyleElement) {
+      smartThemeStyleElement = document.createElement("style");
+      smartThemeStyleElement.id = "smart-theme-style";
+      document.head.appendChild(smartThemeStyleElement);
+    }
+  }
+
+  smartThemeStyleElement.textContent = createSmartThemeStyleSheet(smartThemes.value);
+}
+
 function setTheme(themeId) {
-  currentTheme.value = themeId;
-  isDark.value = themeId === "dark";
-  document.documentElement.setAttribute("data-theme", themeId);
+  const nextThemeId = themes.value.some((theme) => theme.id === themeId)
+    ? themeId
+    : "elegant";
+  const smartTheme = getSmartTheme(nextThemeId);
+
+  currentTheme.value = nextThemeId;
+  isDark.value = smartTheme ? smartTheme.mode === "dark" : nextThemeId === "dark";
+  document.documentElement.setAttribute("data-theme", nextThemeId);
+
+  if (smartTheme) {
+    document.documentElement.setAttribute("data-ai-theme", "true");
+  } else {
+    document.documentElement.removeAttribute("data-ai-theme");
+  }
 
   if (isWailsEnv) {
-    if (themeId === "dark") {
+    if (smartTheme) {
+      const bg = getSmartThemeWindowColor(smartTheme);
+      if (smartTheme.mode === "dark") {
+        WindowSetDarkThemeFunc?.();
+      } else {
+        WindowSetLightThemeFunc?.();
+      }
+      WindowSetBackgroundColourFunc?.(bg.r, bg.g, bg.b, 255);
+    } else if (nextThemeId === "dark") {
       WindowSetDarkThemeFunc?.();
       WindowSetBackgroundColourFunc?.(13, 17, 23, 255);
-    } else if (themeId === "elegant") {
+    } else if (nextThemeId === "elegant") {
       WindowSetLightThemeFunc?.();
       WindowSetBackgroundColourFunc?.(246, 241, 232, 255);
     } else {
@@ -974,10 +1059,25 @@ function setTheme(themeId) {
   }
 }
 
+watch(
+  smartThemes,
+  (value) => {
+    saveSmartThemes(value);
+    syncSmartThemeStyles();
+    if (
+      isSmartThemeId(currentTheme.value) &&
+      !value.some((theme) => theme.id === currentTheme.value)
+    ) {
+      setTheme("elegant");
+    }
+  },
+  { deep: true }
+);
+
 function cycleTheme() {
-  const currentIndex = themes.findIndex((t) => t.id === currentTheme.value);
-  const nextIndex = (currentIndex + 1) % themes.length;
-  setTheme(themes[nextIndex].id);
+  const currentIndex = themes.value.findIndex((t) => t.id === currentTheme.value);
+  const nextIndex = (currentIndex + 1) % themes.value.length;
+  setTheme(themes.value[nextIndex].id);
 }
 
 function openSettings(section = "general") {
@@ -1062,7 +1162,7 @@ function readCurrentScrollRatio(mode = viewMode.value) {
     return getScrollRatio(liveEditorRef.value);
   }
 
-  return getScrollRatio(document.querySelector(".content-area"));
+  return getScrollRatio(previewRef.value);
 }
 
 function restoreScrollRatioForMode(mode) {
@@ -1078,8 +1178,37 @@ function restoreScrollRatioForMode(mode) {
       return;
     }
 
-    applyScrollRatio(document.querySelector(".content-area"), savedScrollRatio);
+    applyScrollRatio(previewRef.value, savedScrollRatio);
   });
+}
+
+function scrollElementToTop(element) {
+  if (!element) {
+    return;
+  }
+
+  if (typeof element.scrollTo === "function") {
+    element.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+
+  element.scrollTop = 0;
+}
+
+function scrollDocumentToTop() {
+  if (viewMode.value === "split") {
+    scrollElementToTop(editorRef.value);
+    scrollElementToTop(previewRef.value);
+    return;
+  }
+
+  if (viewMode.value === "live") {
+    scrollElementToTop(liveEditorRef.value);
+    scrollElementToTop(liveEditorRef.value?.querySelector?.(".plain-text-editor"));
+    return;
+  }
+
+  scrollElementToTop(previewRef.value);
 }
 
 function prepareEditingBuffer(sourceContent = markdownContent.value) {
@@ -1360,6 +1489,132 @@ function openSettingsFromSmartFormatFailure() {
   openSettings("models");
 }
 
+function getActiveSmartThemeModel(modelId = "") {
+  return getSmartFormatModel(modelId);
+}
+
+function applySmartTheme(themeId) {
+  const theme = smartThemes.value.find((item) => item.id === themeId) || null;
+  if (!theme) {
+    showToast("主题不存在，可能已被删除。", "error");
+    if (currentTheme.value === themeId) {
+      setTheme("elegant");
+    }
+    return;
+  }
+
+  setTheme(theme.id);
+  showToast(`已切换到智能主题：${theme.name}`, "success");
+}
+
+function deleteSmartTheme(themeId) {
+  const theme = smartThemes.value.find((item) => item.id === themeId) || null;
+  if (!theme) {
+    return;
+  }
+
+  smartThemes.value = smartThemes.value.filter((item) => item.id !== themeId);
+  syncSmartThemeStyles();
+
+  if (currentTheme.value === themeId) {
+    setTheme("elegant");
+  }
+
+  showToast(`已删除智能主题：${theme.name}`, "success");
+}
+
+function openSmartThemePrompt() {
+  if (!isWailsEnv || !GenerateThemeWithAI) {
+    showToast("请在桌面应用中生成智能主题", "error");
+    return;
+  }
+
+  const model = getActiveSmartThemeModel();
+  if (!model) {
+    showToast("请先在模型配置中添加、测试并启用一个模型", "error");
+    openSettings("models");
+    return;
+  }
+
+  if (!model.baseUrl || !model.model) {
+    showToast("当前模型缺少接口地址或模型名称，请先补充", "error");
+    openSettings("models");
+    return;
+  }
+
+  showSmartThemePrompt.value = true;
+}
+
+function confirmSmartThemePrompt(prompt) {
+  smartThemePrompt.value = String(prompt || "").trim().slice(0, 800);
+  showSmartThemePrompt.value = false;
+  generateSmartTheme(smartThemePrompt.value);
+}
+
+async function generateSmartTheme(preference = smartThemePrompt.value) {
+  if (!isWailsEnv || !GenerateThemeWithAI) {
+    showToast("请在桌面应用中生成智能主题", "error");
+    return;
+  }
+
+  const model = getActiveSmartThemeModel();
+  if (!model) {
+    showToast("请先在模型配置中添加、测试并启用一个模型", "error");
+    openSettings("models");
+    return;
+  }
+
+  if (!model.baseUrl || !model.model) {
+    showToast("当前模型缺少接口地址或模型名称，请先补充", "error");
+    openSettings("models");
+    return;
+  }
+
+  isGeneratingSmartTheme.value = true;
+  isLoading.value = true;
+  loadingText.value = "AI 正在生成智能主题...";
+
+  try {
+    const normalizedPreference = String(preference || "").trim().slice(0, 800);
+    const rawTheme = await GenerateThemeWithAI({
+      preference: normalizedPreference,
+      currentTheme: currentTheme.value,
+      model: {
+        name: model.name,
+        baseUrl: model.baseUrl,
+        apiKey: model.apiKey,
+        model: model.model,
+        timeout: model.timeout,
+        formatTimeout: model.formatTimeout,
+        headers: model.headers,
+      },
+    });
+
+    const smartTheme = createSmartThemeFromAI(
+      rawTheme,
+      normalizedPreference || "生成智能主题"
+    );
+    if (!smartTheme) {
+      throw new Error("AI 返回了无效的主题配置");
+    }
+
+    smartThemes.value = [
+      smartTheme,
+      ...smartThemes.value.filter((item) => item.id !== smartTheme.id),
+    ].slice(0, 12);
+    syncSmartThemeStyles();
+    appSettings.value.activeModelId = model.id;
+    setTheme(smartTheme.id);
+    showToast(`已生成并应用主题：${smartTheme.name}`, "success");
+  } catch (e) {
+    console.error("智能主题生成失败:", e);
+    showToast("智能主题生成失败：" + (e.message || e), "error");
+  } finally {
+    isGeneratingSmartTheme.value = false;
+    isLoading.value = false;
+  }
+}
+
 // Toast 提示
 const toastMessage = ref("");
 const toastType = ref("success");
@@ -1420,6 +1675,13 @@ function resetSyncState() {
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const ZOOM_STEP = 10;
+const MIN_BROWSER_ZOOM = 50;
+const MAX_BROWSER_ZOOM = 200;
+const BROWSER_ZOOM_STEP = 10;
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 function zoomIn() {
   if (zoomLevel.value < MAX_ZOOM) {
@@ -1445,6 +1707,29 @@ function applyZoom() {
     "--base-font-size",
     `${16 * (zoomLevel.value / 100)}px`
   );
+}
+
+function setBrowserZoomLevel(nextZoom) {
+  browserZoomLevel.value = clampNumber(
+    Math.round(nextZoom / BROWSER_ZOOM_STEP) * BROWSER_ZOOM_STEP,
+    MIN_BROWSER_ZOOM,
+    MAX_BROWSER_ZOOM
+  );
+}
+
+function resetBrowserZoom() {
+  setBrowserZoomLevel(100);
+  showToast("浏览器缩放已还原为 100%", "success");
+}
+
+function handleBrowserZoomWheel(event) {
+  if (!event.ctrlKey) {
+    return;
+  }
+
+  event.preventDefault();
+  const direction = event.deltaY < 0 ? 1 : -1;
+  setBrowserZoomLevel(browserZoomLevel.value + direction * BROWSER_ZOOM_STEP);
 }
 
 // 加载启动文件
@@ -1658,27 +1943,51 @@ function tocIndent(level) {
 
 // 处理图片
 function processImagePaths() {
+  const runToken = ++imageProcessingToken;
   nextTick(async () => {
-    const container = document.querySelector(".markdown-body");
-    if (!container) return;
-    const images = container.querySelectorAll("img");
-    for (const img of images) {
-      const src = img.getAttribute("src");
-      if (
-        !src ||
-        src.startsWith("data:") ||
-        src.startsWith("http://") ||
-        src.startsWith("https://")
-      )
-        continue;
-      try {
-        const resolvedPath = await ResolveImagePath(src);
-        const base64 = await ReadImageAsBase64(resolvedPath);
-        if (base64) {
-          img.setAttribute("src", base64);
+    const containers = Array.from(document.querySelectorAll(".markdown-body"));
+    if (!containers.length) return;
+
+    for (const container of containers) {
+      const images = Array.from(container.querySelectorAll("img"));
+      for (const img of images) {
+        if (runToken !== imageProcessingToken) {
+          return;
         }
-      } catch (e) {
-        console.warn("图片加载失败:", src, e);
+
+        const src = img.getAttribute("src");
+        if (
+          !src ||
+          src.startsWith("data:") ||
+          src.startsWith("http://") ||
+          src.startsWith("https://")
+        ) {
+          continue;
+        }
+
+        try {
+          const resolvedPath = await ResolveImagePath(src);
+          const cacheKey = String(resolvedPath || src);
+          let base64 = imageBase64Cache.get(cacheKey);
+
+          if (!base64) {
+            base64 = await ReadImageAsBase64(resolvedPath);
+            if (base64 && base64.length <= MAX_IMAGE_BASE64_LENGTH) {
+              imageBase64Cache.set(cacheKey, base64);
+              while (imageBase64Cache.size > MAX_IMAGE_BASE64_CACHE_ENTRIES) {
+                imageBase64Cache.delete(imageBase64Cache.keys().next().value);
+              }
+            } else {
+              base64 = "";
+            }
+          }
+
+          if (base64 && img.getAttribute("src") === src) {
+            img.setAttribute("src", base64);
+          }
+        } catch (e) {
+          console.warn("图片加载失败:", src, e);
+        }
       }
     }
   });
@@ -1783,8 +2092,10 @@ function stopResizeToc() {
 
 onMounted(async () => {
   document.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("wheel", handleBrowserZoomWheel, { passive: false });
   window.addEventListener("focus", handleWindowFocus);
   window.addEventListener("resize", syncWindowMaximizedState);
+  syncSmartThemeStyles();
   setTheme(currentTheme.value);
   applyZoom();
 
@@ -1832,6 +2143,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleKeyDown);
+  window.removeEventListener("wheel", handleBrowserZoomWheel);
   window.removeEventListener("focus", handleWindowFocus);
   window.removeEventListener("resize", syncWindowMaximizedState);
   document.removeEventListener("mousemove", handleResizeSplit);
@@ -1868,7 +2180,7 @@ onUnmounted(() => {
       'split-mode': viewMode === 'split',
       'live-mode': viewMode === 'live',
     }"
-    :style="styleConfigVars"
+    :style="appContainerStyle"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
     @drop="handleDrop"
@@ -1981,8 +2293,9 @@ onUnmounted(() => {
             stroke="currentColor"
             stroke-width="2"
           >
-            <path d="M3 6.5h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
-            <path d="M3 9h18" />
+            <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.2l2 2.4h6.8A2.5 2.5 0 0 1 21 8.9v1.2" />
+            <path d="M3.3 10h17.4a1.2 1.2 0 0 1 1.15 1.55l-1.72 5.7A2.5 2.5 0 0 1 17.73 19H5.9a2.5 2.5 0 0 1-2.42-1.9L2.15 11.5A1.2 1.2 0 0 1 3.3 10Z" />
+            <path d="M9 14h6" />
           </svg>
           <span>文件夹</span>
         </button>
@@ -2132,7 +2445,7 @@ onUnmounted(() => {
 
         <!-- 主题按钮 -->
         <button
-          class="toolbar-btn"
+          class="toolbar-btn style-config-btn"
           @click="toggleStylePanel"
           :class="{ active: stylePanelState.visible }"
           title="样式配置"
@@ -2334,6 +2647,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 分屏模式 -->
+      <div class="document-stage">
       <template v-if="viewMode === 'split'">
         <div
           ref="splitContainerRef"
@@ -2392,11 +2706,26 @@ onUnmounted(() => {
 
       <!-- 预览模式 -->
       <template v-else>
-        <div class="content-area" @scroll="handlePreviewScroll">
+        <div ref="previewRef" class="content-area" @scroll="handlePreviewScroll">
           <div v-if="isMarkdownDocument" class="markdown-body" v-html="renderedHtml"></div>
           <pre v-else class="plain-text-preview standalone"><code>{{ markdownContent }}</code></pre>
         </div>
       </template>
+
+        <button
+          v-if="hasDocumentContent"
+          class="back-to-top-btn"
+          type="button"
+          title="回到顶部"
+          aria-label="回到顶部"
+          @click="scrollDocumentToTop"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 19V5" />
+            <path d="m5 12 7-7 7 7" />
+          </svg>
+        </button>
+      </div>
 
       <StyleConfigPanel
         v-if="stylePanelState.visible"
@@ -2406,8 +2735,13 @@ onUnmounted(() => {
         :themes="themes"
         :effective-metrics="styleConfigMetrics"
         :show-reset="hasCustomStyleConfig"
+        :smart-themes="smartThemes"
+        :generating-smart-theme="isGeneratingSmartTheme"
         @theme-change="setTheme"
         @reset="resetPluginStyles"
+        @generate-smart-theme="openSmartThemePrompt"
+        @apply-smart-theme="applySmartTheme"
+        @delete-smart-theme="deleteSmartTheme"
       />
     </div>
 
@@ -2416,6 +2750,8 @@ onUnmounted(() => {
       v-model:settings="appSettings"
       :test-model="TestAIModel"
       :initial-section="settingsInitialSection"
+      :browser-zoom-level="browserZoomLevel"
+      @reset-browser-zoom="resetBrowserZoom"
       @close="showSettingsModal = false"
     />
 
@@ -2443,6 +2779,13 @@ onUnmounted(() => {
       :initial-instruction="smartFormatInstruction"
       @confirm="confirmSmartFormatPrompt"
       @close="showSmartFormatPrompt = false"
+    />
+
+    <SmartThemePromptModal
+      :visible="showSmartThemePrompt"
+      :initial-prompt="smartThemePrompt"
+      @confirm="confirmSmartThemePrompt"
+      @close="showSmartThemePrompt = false"
     />
 
     <SmartFormatFailureModal
@@ -2841,6 +3184,277 @@ onUnmounted(() => {
   margin-left: 1.2em;
 }
 
+[data-ai-theme="true"] .app-container {
+  background: var(--ai-app-background, var(--bg-primary));
+}
+
+[data-ai-theme="true"] .toolbar {
+  background: var(--ai-toolbar-bg, var(--bg-toolbar));
+  border-bottom: var(--ai-border-width, 1px) solid
+    var(--ai-divider-color, var(--border-toolbar));
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: var(--ai-surface-filter, none);
+}
+
+[data-ai-theme="true"] .toolbar-btn,
+[data-ai-theme="true"] .window-control,
+[data-ai-theme="true"] .view-mode-tab,
+[data-ai-theme="true"] .settings-primary-btn,
+[data-ai-theme="true"] .settings-secondary-btn,
+[data-ai-theme="true"] .settings-danger-btn,
+[data-ai-theme="true"] .settings-link-btn,
+[data-ai-theme="true"] .theme-apply-btn,
+[data-ai-theme="true"] .theme-delete-btn,
+[data-ai-theme="true"] .generate-theme-btn {
+  border-radius: var(--ai-control-radius, 8px);
+}
+
+[data-ai-theme="true"] .toolbar-btn {
+  border: 1px solid transparent;
+  background: var(--ai-button-bg, transparent);
+  box-shadow: none;
+}
+
+[data-ai-theme="true"] .toolbar-btn:hover,
+[data-ai-theme="true"] .window-control:hover,
+[data-ai-theme="true"] .view-mode-tab:hover {
+  background: var(--ai-button-hover-bg, var(--btn-hover));
+}
+
+[data-ai-theme="true"] .toolbar-btn.active,
+[data-ai-theme="true"] .view-mode-tab.active {
+  background: var(--ai-button-active-bg, var(--accent-color));
+  color: var(--ai-primary-button-text, #ffffff);
+  box-shadow: var(--ai-control-shadow, none);
+}
+
+[data-ai-theme="true"] .view-mode-tabs,
+[data-ai-theme="true"] .zoom-controls {
+  border-color: var(--ai-divider-color, var(--border-color));
+}
+
+[data-ai-theme="true"] .view-mode-tabs {
+  border-radius: var(--ai-control-radius, 8px);
+  background: var(--ai-elevated-bg, var(--bg-toolbar));
+  box-shadow: var(--ai-control-shadow, none);
+}
+
+[data-ai-theme="true"] .window-controls {
+  border-left-color: var(--ai-divider-color, var(--border-toolbar));
+}
+
+[data-ai-theme="true"] .toc-sidebar,
+[data-ai-theme="true"] .style-config-panel,
+[data-ai-theme="true"] .settings-modal,
+[data-ai-theme="true"] .theme-prompt-modal {
+  background: var(--ai-sidebar-bg, var(--bg-toc));
+  border-color: var(--ai-divider-color, var(--border-color));
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: var(--ai-surface-filter, none);
+}
+
+[data-ai-theme="true"] .style-config-panel,
+[data-ai-theme="true"] .settings-modal,
+[data-ai-theme="true"] .theme-prompt-modal,
+[data-ai-theme="true"] .smart-theme-card,
+[data-ai-theme="true"] .smart-theme-empty,
+[data-ai-theme="true"] .loading-content,
+[data-ai-theme="true"] .toast-container {
+  border-radius: var(--ai-card-radius, 14px);
+}
+
+[data-ai-theme="true"] .toc-header,
+[data-ai-theme="true"] .settings-header,
+[data-ai-theme="true"] .theme-prompt-header,
+[data-ai-theme="true"] .section-toggle,
+[data-ai-theme="true"] .smart-theme-card {
+  border-color: var(--ai-divider-color, var(--border-color));
+}
+
+[data-ai-theme="true"] .toc-item,
+[data-ai-theme="true"] .file-tree-row,
+[data-ai-theme="true"] .settings-nav-item,
+[data-ai-theme="true"] .inline-reset-btn {
+  border-radius: var(--ai-control-radius, 8px);
+}
+
+[data-ai-theme="true"] .toc-item:hover,
+[data-ai-theme="true"] .file-tree-row:hover,
+[data-ai-theme="true"] .settings-nav-item:hover {
+  background: var(--bg-toc-hover);
+}
+
+[data-ai-theme="true"] .toc-item.active,
+[data-ai-theme="true"] .file-tree-row.is-active,
+[data-ai-theme="true"] .settings-nav-item.active {
+  background: var(--bg-toc-active);
+  color: var(--accent-color);
+}
+
+[data-ai-theme="true"] .content-area,
+[data-ai-theme="true"] .split-preview,
+[data-ai-theme="true"] .live-editor-view,
+[data-ai-theme="true"] .split-editor,
+[data-ai-theme="true"] .editor,
+[data-ai-theme="true"] .plain-text-editor,
+[data-ai-theme="true"] .plain-text-preview {
+  background: var(--ai-editor-bg, transparent);
+}
+
+[data-ai-theme="true"] .split-editor,
+[data-ai-theme="true"] .editor,
+[data-ai-theme="true"] .plain-text-editor,
+[data-ai-theme="true"] .settings-field input,
+[data-ai-theme="true"] .theme-prompt-body textarea,
+[data-ai-theme="true"] .app-select {
+  border-color: var(--ai-divider-color, var(--border-color));
+  border-radius: var(--ai-control-radius, 8px);
+  background: var(--ai-surface-bg, var(--bg-secondary));
+  box-shadow: var(--ai-control-shadow, none);
+}
+
+[data-ai-theme="true"] .split-divider::before,
+[data-ai-theme="true"] .toc-resize-handle::after {
+  background: var(--ai-divider-color, var(--border-color));
+}
+
+[data-ai-theme="true"] .back-to-top-btn {
+  border-color: var(--ai-divider-color, var(--border-color));
+  border-radius: var(--ai-control-radius, 999px);
+  background: var(--ai-elevated-bg, var(--bg-toolbar));
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: var(--ai-surface-filter, none);
+}
+
+[data-ai-theme="true"] .markdown-body pre,
+[data-ai-theme="true"] .code-block {
+  box-shadow: var(--shadow-sm);
+}
+
+[data-ai-theme="true"] .content-area::-webkit-scrollbar,
+[data-ai-theme="true"] .editor::-webkit-scrollbar,
+[data-ai-theme="true"] .split-editor::-webkit-scrollbar,
+[data-ai-theme="true"] .split-preview::-webkit-scrollbar,
+[data-ai-theme="true"] .toc-list::-webkit-scrollbar,
+[data-ai-theme="true"] .file-tree-panel::-webkit-scrollbar,
+[data-ai-theme="true"] .live-editor-view::-webkit-scrollbar,
+[data-ai-theme="true"] .smart-theme-list::-webkit-scrollbar {
+  width: var(--ai-scrollbar-size, 8px);
+  height: var(--ai-scrollbar-size, 8px);
+}
+
+[data-ai-theme="true"] .content-area::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .editor::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .split-editor::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .split-preview::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .toc-list::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .file-tree-panel::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .live-editor-view::-webkit-scrollbar-thumb,
+[data-ai-theme="true"] .smart-theme-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+[data-ai-theme="true"] .markdown-body h1,
+[data-ai-theme="true"] .markdown-body h2 {
+  padding: var(--ai-markdown-heading-padding, 0 0 0.3em);
+  border-bottom-color: var(--ai-markdown-heading-border, var(--border-color));
+  border-radius: var(--ai-markdown-heading-radius, 0);
+  background: var(--ai-markdown-heading-bg, transparent);
+  box-shadow: var(--ai-markdown-heading-shadow, none);
+}
+
+[data-ai-theme="true"] .markdown-body h3,
+[data-ai-theme="true"] .markdown-body h4 {
+  border-radius: var(--ai-markdown-heading-radius, 0);
+}
+
+[data-ai-theme="true"] .markdown-body a,
+[data-ai-theme="true"] .markdown-body strong {
+  color: var(--accent-color);
+}
+
+[data-ai-theme="true"] .markdown-body code {
+  color: var(--ai-markdown-code-text, var(--code-text));
+  background: var(--ai-markdown-code-bg, var(--code-bg));
+  border-color: var(--ai-markdown-code-border, var(--code-border));
+  border-radius: var(--ai-markdown-code-radius, 10px);
+}
+
+[data-ai-theme="true"] .markdown-body pre {
+  color: var(--ai-markdown-code-text, var(--code-text));
+  background: var(--ai-markdown-code-bg, var(--code-bg));
+  border-color: var(--ai-markdown-code-border, var(--code-border));
+  border-radius: var(--ai-markdown-code-radius, 10px);
+}
+
+[data-ai-theme="true"] .markdown-body pre code {
+  background: transparent;
+  border: 0;
+}
+
+[data-ai-theme="true"] .markdown-body blockquote {
+  border-left-color: var(--blockquote-border);
+  border-radius: var(--ai-markdown-block-radius, 10px);
+  background: var(--ai-markdown-block-bg, var(--blockquote-bg));
+}
+
+[data-ai-theme="true"] .markdown-body .table-border {
+  overflow: hidden;
+  border: 1px solid var(--table-border);
+  border-radius: var(--ai-markdown-table-radius, 10px);
+  background: var(--ai-markdown-table-bg, transparent);
+  box-shadow: var(--ai-markdown-table-shadow, none);
+}
+
+[data-ai-theme="true"] .markdown-body .table-scroll {
+  border-radius: inherit;
+}
+
+[data-ai-theme="true"] .markdown-body table th {
+  background: var(--ai-markdown-table-header-bg, var(--bg-secondary));
+}
+
+[data-ai-theme="true"] .markdown-body img {
+  border-radius: var(--ai-markdown-image-radius, 10px);
+  box-shadow: var(--ai-markdown-image-shadow, none);
+}
+
+[data-ai-theme="true"] .markdown-body hr {
+  background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
+}
+
+[data-ai-theme="true"] .markdown-body .task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+[data-ai-theme="true"] .markdown-body .task-list-item {
+  display: grid;
+  grid-template-columns: 20px auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--ai-divider-color, var(--border-color));
+  border-radius: var(--ai-markdown-task-radius, 10px);
+  background: var(--ai-markdown-task-bg, transparent);
+  box-shadow: var(--ai-markdown-task-shadow, none);
+}
+
+[data-ai-theme="true"] .markdown-body .task-list-item.is-pending {
+  background:
+    linear-gradient(90deg, var(--ai-markdown-task-pending-bg, transparent), transparent 24%),
+    var(--ai-markdown-task-bg, transparent);
+}
+
+[data-ai-theme="true"] .markdown-body .task-list-item.is-complete {
+  background:
+    linear-gradient(90deg, var(--ai-markdown-task-complete-bg, transparent), transparent 18%),
+    var(--ai-markdown-task-bg, transparent);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -2859,12 +3473,15 @@ body {
 }
 
 .app-container {
-  height: 100%;
+  width: var(--browser-zoom-size, 100%);
+  height: var(--browser-zoom-size, 100%);
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
   color: var(--text-primary);
   position: relative;
+  transform-origin: 0 0;
+  zoom: var(--browser-zoom-scale, 1);
 }
 
 .drag-overlay {
@@ -2921,6 +3538,7 @@ body {
 .toolbar-center {
   flex: 1;
   min-width: 70px;
+  margin-left: 20px;
   overflow: hidden;
   --wails-draggable: drag;
   -webkit-app-region: drag;
@@ -3090,7 +3708,7 @@ body {
 }
 .theme-btn .theme-name {
   font-size: 12px;
-  max-width: 40px;
+  white-space: nowrap;
 }
 .smart-format-btn {
   margin-right: 8px;
@@ -3153,6 +3771,7 @@ body {
 @media (max-width: 1120px) {
   .toolbar-left .toolbar-btn span,
   .smart-format-btn span:not(.loading-spinner-sm),
+  .style-config-btn span,
   .settings-btn span,
   .theme-name {
     display: none;
@@ -3236,6 +3855,15 @@ body {
   overflow: hidden;
   min-height: 0;
   contain: layout;
+}
+
+.document-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
 }
 
 .toc-sidebar {
@@ -3862,14 +4490,62 @@ body {
   height: calc(100vh - 44px);
 }
 
+.back-to-top-btn {
+  position: absolute;
+  right: 30px;
+  bottom: 30px;
+  z-index: 70;
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-toolbar);
+  background: color-mix(in srgb, var(--bg-toolbar) 88%, transparent);
+  color: var(--text-secondary);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: transform 0.18s ease, color 0.18s ease, background 0.18s ease,
+    border-color 0.18s ease, box-shadow 0.18s ease;
+  -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
+}
+
+.back-to-top-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+  color: #fff;
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.24);
+}
+
+.back-to-top-btn:active {
+  transform: translateY(0);
+}
+
+.back-to-top-btn svg {
+  width: 19px;
+  height: 19px;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* 滚动条 */
 .content-area::-webkit-scrollbar,
-.file-tree-panel::-webkit-scrollbar,
-.toc-list::-webkit-scrollbar,
 .editor::-webkit-scrollbar,
 .split-editor::-webkit-scrollbar,
 .split-preview::-webkit-scrollbar,
 .live-editor-view::-webkit-scrollbar {
+  width: 15px;
+}
+
+.file-tree-panel::-webkit-scrollbar,
+.toc-list::-webkit-scrollbar {
   width: 8px;
 }
 .content-area::-webkit-scrollbar-track,

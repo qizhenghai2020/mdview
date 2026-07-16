@@ -24,6 +24,10 @@
 ![预览模式](screenshots/preview.png)
 ![分屏编辑](screenshots/split.png)
 ![计划任务](screenshots/task.png)
+![AI生成主题](screenshots/theme_ai.png)
+![主题1](screenshots/theme1.png)
+![主题2](screenshots/theme2.png)
+![主题3](screenshots/theme3.png)
 
 ## 安装
 

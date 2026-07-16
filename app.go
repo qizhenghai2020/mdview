@@ -62,6 +62,12 @@ type AIFormatRequest struct {
 	Model       AIModelConfig `json:"model"`
 }
 
+type AIThemeRequest struct {
+	Preference   string        `json:"preference"`
+	CurrentTheme string        `json:"currentTheme"`
+	Model        AIModelConfig `json:"model"`
+}
+
 type chatCompletionMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -99,6 +105,10 @@ type FileWorkspace struct {
 }
 
 const maxWorkspaceFiles = 10000
+const maxAIFormatResponseBytes int64 = 8 * 1024 * 1024
+const maxAIThemeResponseBytes int64 = 256 * 1024
+const maxAITestResponseBytes int64 = 128 * 1024
+const maxInlineImageBytes int64 = 3 * 1024 * 1024
 
 var textFileExtensions = map[string]struct{}{
 	".adoc": {}, ".asc": {}, ".asm": {}, ".astro": {}, ".bat": {}, ".bash": {},
@@ -422,6 +432,11 @@ func (a *App) WriteFile(path string, content string) error {
 
 // ReadImageAsBase64 reads an image file and returns it as a base64 data URI
 func (a *App) ReadImageAsBase64(imagePath string) string {
+	info, err := os.Stat(imagePath)
+	if err != nil || info.Size() > maxInlineImageBytes {
+		return ""
+	}
+
 	data, err := os.ReadFile(imagePath)
 	if err != nil {
 		return ""
@@ -815,7 +830,7 @@ func (a *App) FormatMarkdownWithAI(req AIFormatRequest) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readLimitedAIResponse(resp.Body, maxAIFormatResponseBytes)
 	if err != nil {
 		if isTimeoutError(err) {
 			return "", formatAITimeoutError(timeout)
@@ -849,6 +864,213 @@ func (a *App) FormatMarkdownWithAI(req AIFormatRequest) (string, error) {
 	}
 
 	return content, nil
+}
+
+// GenerateThemeWithAI asks an OpenAI-compatible model for a UI theme palette.
+func (a *App) GenerateThemeWithAI(req AIThemeRequest) (string, error) {
+	baseURL := strings.TrimSpace(req.Model.BaseURL)
+	modelName := strings.TrimSpace(req.Model.Model)
+	if baseURL == "" || modelName == "" {
+		return "", fmt.Errorf("模型接口地址或模型名称为空")
+	}
+
+	timeout := req.Model.FormatTimeout
+	if timeout <= 0 {
+		timeout = 300
+	}
+	if timeout < 30 {
+		timeout = 30
+	}
+	if timeout > 1800 {
+		timeout = 1800
+	}
+
+	endpoint := strings.TrimRight(baseURL, "/")
+	if !strings.HasSuffix(endpoint, "/chat/completions") {
+		endpoint += "/chat/completions"
+	}
+
+	preference := strings.TrimSpace(req.Preference)
+	if preference == "" {
+		preference = "随机生成一套适合 Markdown 阅读器的高质感完整 UI 主题。需要覆盖站点界面、按钮、滚动条、分割线、面板质感、Markdown 标题/代码/表格/任务列表等；不要只换颜色，也不要生成普通紫色模板。"
+	}
+	preferenceRunes := []rune(preference)
+	if len(preferenceRunes) > 800 {
+		preference = string(preferenceRunes[:800])
+	}
+
+	currentTheme := strings.TrimSpace(req.CurrentTheme)
+	currentThemeRunes := []rune(currentTheme)
+	if len(currentThemeRunes) > 80 {
+		currentTheme = string(currentThemeRunes[:80])
+	}
+	if currentTheme == "" {
+		currentTheme = "unknown"
+	}
+
+	userPrompt := "当前主题 ID: " + currentTheme + "\n用户偏好: " + preference + "\n请生成一套完整、协调、可读性强的 Markdown 阅读器主题。主体结构布局不变，但页面上可见的 UI 质感、按钮、滚动条、分割线、圆角、阴影、半透明效果和 Markdown 组件风格都要统一。"
+	payload := chatCompletionRequest{
+		Model:       modelName,
+		Temperature: 0.85,
+		Messages: []chatCompletionMessage{
+			{
+				Role: "system",
+				Content: `你是资深产品 UI 设计师和 Markdown 阅读体验设计师。只返回 JSON，不要 Markdown 代码块，不要解释。
+JSON 必须符合这个结构：
+{
+  "name": "中文短主题名，最多 8 个汉字",
+  "description": "一句话说明主题气质",
+  "mode": "light 或 dark",
+  "style": "glass、crystal、neumorphism、paper、aurora、professional、minimal 之一",
+  "palette": {
+    "background": "#F7FAFC",
+    "surface": "#FFFFFF",
+    "elevated": "#F8FBFF",
+    "toolbar": "#FFFFFF",
+    "sidebar": "#F4F7FB",
+    "sidebarHover": "#EAF2FF",
+    "sidebarActive": "#DDEAFE",
+    "editor": "#FFFFFF",
+    "text": "#172033",
+    "textSecondary": "#536075",
+    "textTertiary": "#8994A8",
+    "border": "#D9E1EF",
+    "toolbarBorder": "#DDE5F0",
+    "accent": "#2563EB",
+    "accentHover": "#1D4ED8",
+    "codeBackground": "#111827",
+    "codeText": "#F8FAFC",
+    "codeBorder": "#1F2937",
+    "blockquoteBorder": "#93C5FD",
+    "blockquoteBackground": "#EFF6FF",
+    "tableBorder": "#D9E1EF",
+    "tableStripe": "#F6F9FF",
+    "scrollbarThumb": "#B8C4D8",
+    "buttonHover": "rgba(37, 99, 235, 0.10)",
+    "buttonActive": "rgba(37, 99, 235, 0.16)"
+  },
+  "appearance": {
+    "surfaceOpacity": 0.72,
+    "chromeOpacity": 0.76,
+    "sidebarOpacity": 0.74,
+    "editorOpacity": 0.82,
+    "blur": 16,
+    "radius": 20,
+    "controlRadius": 12,
+    "cardRadius": 18,
+    "borderOpacity": 0.45,
+    "shadow": "none、soft、floating、raised、paper、glow 之一",
+    "buttonStyle": "plain、solid、subtle、glass、raised、glow 之一"
+  },
+  "markdown": {
+    "surfaceOpacity": 0.82,
+    "headingStyle": "clean、accent-line、floating、soft、editorial、glow 之一",
+    "codeStyle": "minimal、panel、raised、ink 之一",
+    "tableStyle": "minimal、card、paper、raised 之一",
+    "taskStyle": "compact、cards 之一",
+    "imageStyle": "rounded、floating、paper、raised 之一",
+    "headingRadius": 10,
+    "blockRadius": 16,
+    "tableRadius": 18,
+    "taskRadius": 18,
+    "imageRadius": 18
+  }
+}
+所有颜色必须是安全 CSS 颜色值，优先使用 #RRGGBB，透明色只允许 rgba(...)。appearance 和 markdown 只能使用上述字段和值；数值要克制，blur 不要超过 28。文字和背景必须有足够对比度。`,
+			},
+			{
+				Role:    "user",
+				Content: userPrompt,
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("生成主题请求失败: %w", err)
+	}
+
+	requestCtx := a.ctx
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
+
+	httpReq, err := http.NewRequestWithContext(
+		requestCtx,
+		http.MethodPost,
+		endpoint,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return "", fmt.Errorf("创建主题请求失败: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(req.Model.APIKey) != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(req.Model.APIKey))
+	}
+	if err := applyAIRequestHeaders(httpReq, req.Model.Headers); err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		if isTimeoutError(err) {
+			return "", formatAITimeoutError(timeout)
+		}
+		return "", fmt.Errorf("请求模型生成主题失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := readLimitedAIResponse(resp.Body, maxAIThemeResponseBytes)
+	if err != nil {
+		if isTimeoutError(err) {
+			return "", formatAITimeoutError(timeout)
+		}
+		return "", fmt.Errorf("读取主题响应失败: %w", err)
+	}
+
+	var completion chatCompletionResponse
+	if err := json.Unmarshal(respBody, &completion); err != nil {
+		return "", fmt.Errorf("解析主题模型响应失败: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if completion.Error != nil && strings.TrimSpace(completion.Error.Message) != "" {
+			return "", fmt.Errorf("模型返回错误: %s", completion.Error.Message)
+		}
+		return "", fmt.Errorf("主题模型请求失败，HTTP %d", resp.StatusCode)
+	}
+
+	if completion.Error != nil && strings.TrimSpace(completion.Error.Message) != "" {
+		return "", fmt.Errorf("模型返回错误: %s", completion.Error.Message)
+	}
+
+	if len(completion.Choices) == 0 {
+		return "", fmt.Errorf("模型没有返回可用主题")
+	}
+
+	content := strings.TrimSpace(stripOuterMarkdownFence(completion.Choices[0].Message.Content))
+	if !json.Valid([]byte(content)) {
+		start := strings.Index(content, "{")
+		end := strings.LastIndex(content, "}")
+		if start >= 0 && end > start {
+			content = strings.TrimSpace(content[start : end+1])
+		}
+	}
+
+	var themePayload map[string]any
+	if err := json.Unmarshal([]byte(content), &themePayload); err != nil {
+		return "", fmt.Errorf("模型没有返回合法主题 JSON: %w", err)
+	}
+
+	normalized, err := json.Marshal(themePayload)
+	if err != nil {
+		return "", fmt.Errorf("整理主题 JSON 失败: %w", err)
+	}
+
+	return string(normalized), nil
 }
 
 // TestAIModel sends a tiny prompt to verify that the configured model can respond.
@@ -925,7 +1147,7 @@ func (a *App) TestAIModel(model AIModelConfig) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readLimitedAIResponse(resp.Body, maxAITestResponseBytes)
 	if err != nil {
 		return "", fmt.Errorf("读取测试响应失败: %w", err)
 	}
@@ -1014,6 +1236,17 @@ func isTimeoutError(err error) bool {
 
 func formatAITimeoutError(timeout int) error {
 	return fmt.Errorf("智能排版超时（当前 %d 秒），请提高模型的“智能排版超时”或更换响应更快的模型", timeout)
+}
+
+func readLimitedAIResponse(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("模型响应过大，已超过 %d KB，请缩短输出或检查接口返回内容", limit/1024)
+	}
+	return data, nil
 }
 
 func stripOuterMarkdownFence(text string) string {

@@ -6,6 +6,8 @@ export function BuildFileWorkspace(arg1:Array<string>):Promise<main.FileWorkspac
 
 export function FormatMarkdownWithAI(arg1:main.AIFormatRequest):Promise<string>;
 
+export function GenerateThemeWithAI(arg1:main.AIThemeRequest):Promise<string>;
+
 export function GetAppVersion():Promise<string>;
 
 export function GetExePath():Promise<string>;

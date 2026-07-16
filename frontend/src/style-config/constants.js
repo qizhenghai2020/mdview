@@ -237,6 +237,7 @@ export function createDefaultStylePanelState() {
       sizes: true,
       presets: true,
       overrides: true,
+      smartThemes: true,
     },
   };
 }

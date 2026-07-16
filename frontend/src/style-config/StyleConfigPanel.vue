@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import { COLOR_PRESETS, ELEMENT_TABS, FONT_OPTIONS } from "./constants";
+import SmartThemeSection from "./SmartThemeSection.vue";
 
 const styleConfig = defineModel("config", { required: true });
 const panelState = defineModel("panelState", { required: true });
@@ -22,9 +23,23 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  smartThemes: {
+    type: Array,
+    default: () => [],
+  },
+  generatingSmartTheme: {
+    type: Boolean,
+    default: false,
+  },
 });
 
-const emit = defineEmits(["theme-change", "reset"]);
+const emit = defineEmits([
+  "theme-change",
+  "reset",
+  "generate-smart-theme",
+  "apply-smart-theme",
+  "delete-smart-theme",
+]);
 
 const layoutControls = [
   {
@@ -273,7 +288,7 @@ function getColorInputValue(color) {
 
       <section class="control-section">
         <button class="section-toggle" type="button" @click="toggleSection('sizes')">
-          <span>字号</span>
+          <span>标题字号</span>
           <span>{{ panelState.sections.sizes ? "▾" : "▸" }}</span>
         </button>
         <div v-if="panelState.sections.sizes" class="section-body">
@@ -309,7 +324,7 @@ function getColorInputValue(color) {
 
       <section class="control-section">
         <button class="section-toggle" type="button" @click="toggleSection('presets')">
-          <span>颜色</span>
+          <span>配色预设</span>
           <span>{{ panelState.sections.presets ? "▾" : "▸" }}</span>
         </button>
         <div v-if="panelState.sections.presets" class="section-body presets-grid">
@@ -346,7 +361,7 @@ function getColorInputValue(color) {
 
       <section class="control-section">
         <button class="section-toggle" type="button" @click="toggleSection('overrides')">
-          <span>元素覆盖</span>
+          <span>自定义</span>
           <span>{{ panelState.sections.overrides ? "▾" : "▸" }}</span>
         </button>
         <div v-if="panelState.sections.overrides" class="section-body">
@@ -486,6 +501,22 @@ function getColorInputValue(color) {
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="control-section">
+        <button class="section-toggle" type="button" @click="toggleSection('smartThemes')">
+          <span>智能主题</span>
+          <span>{{ panelState.sections.smartThemes ? "▾" : "▸" }}</span>
+        </button>
+        <SmartThemeSection
+          v-if="panelState.sections.smartThemes"
+          :themes="props.smartThemes"
+          :current-theme="currentTheme"
+          :generating="props.generatingSmartTheme"
+          @generate="emit('generate-smart-theme')"
+          @apply="emit('apply-smart-theme', $event)"
+          @delete="emit('delete-smart-theme', $event)"
+        />
       </section>
     </div>
   </aside>

@@ -131,6 +131,61 @@ func TestFormatMarkdownWithAIIncludesCustomInstruction(t *testing.T) {
 	}
 }
 
+func TestGenerateThemeWithAIReturnsJSONAndHeaders(t *testing.T) {
+	var gotClient string
+	var gotPayload chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		gotClient = request.Header.Get("X-Client")
+		if err := json.NewDecoder(request.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode theme request: %v", err)
+		}
+		writeChatCompletion(t, responseWriter, `{
+			"name":"水晶晨雾",
+			"description":"清透的玻璃水晶阅读主题",
+			"mode":"light",
+			"style":"crystal",
+			"palette":{"background":"#F7FBFF","surface":"#FFFFFF","accent":"#38BDF8"}
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := NewApp().GenerateThemeWithAI(AIThemeRequest{
+		Preference:   "水晶主题",
+		CurrentTheme: "elegant",
+		Model: AIModelConfig{
+			BaseURL:       server.URL,
+			Model:         "test-model",
+			FormatTimeout: 30,
+			Headers: []AIRequestHeader{
+				{Name: "X-Client", Value: "theme-generator", Enabled: true},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate theme: %v", err)
+	}
+
+	var theme map[string]any
+	if err := json.Unmarshal([]byte(result), &theme); err != nil {
+		t.Fatalf("theme result is not JSON: %v", err)
+	}
+	if theme["name"] != "水晶晨雾" {
+		t.Fatalf("theme name = %q, want 水晶晨雾", theme["name"])
+	}
+	if gotClient != "theme-generator" {
+		t.Errorf("X-Client = %q, want theme-generator", gotClient)
+	}
+	if len(gotPayload.Messages) != 2 {
+		t.Fatalf("message count = %d, want 2", len(gotPayload.Messages))
+	}
+	if !strings.Contains(gotPayload.Messages[1].Content, "水晶主题") {
+		t.Errorf("theme preference was not included: %q", gotPayload.Messages[1].Content)
+	}
+	if !strings.Contains(gotPayload.Messages[0].Content, "只返回 JSON") {
+		t.Errorf("theme JSON guard was not included: %q", gotPayload.Messages[0].Content)
+	}
+}
+
 func TestAIModelRejectsMalformedCustomHeaders(t *testing.T) {
 	serverCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {

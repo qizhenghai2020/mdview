@@ -10,6 +10,10 @@ export function FormatMarkdownWithAI(arg1) {
   return window['go']['main']['App']['FormatMarkdownWithAI'](arg1);
 }
 
+export function GenerateThemeWithAI(arg1) {
+  return window['go']['main']['App']['GenerateThemeWithAI'](arg1);
+}
+
 export function GetAppVersion() {
   return window['go']['main']['App']['GetAppVersion']();
 }

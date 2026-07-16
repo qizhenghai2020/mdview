@@ -20,6 +20,10 @@ function readNumber(value, fallback, min, max) {
   return Math.min(max, Math.max(min, number));
 }
 
+function readBoolean(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 function normalizeModel(rawModel, index) {
   const model = rawModel && typeof rawModel === "object" ? rawModel : {};
   const modelId = String(model.id || `model-${Date.now()}-${index}`);
@@ -92,6 +96,7 @@ export function mergeAppSettings(rawSettings) {
       : DEFAULT_APP_SETTINGS.theme,
     zoom: readNumber(raw.zoom, DEFAULT_APP_SETTINGS.zoom, 50, 200),
     viewMode: VIEW_MODES.has(raw.viewMode) ? raw.viewMode : DEFAULT_APP_SETTINGS.viewMode,
+    showToc: readBoolean(raw.showToc, DEFAULT_APP_SETTINGS.showToc),
     tocWidth: readNumber(raw.tocWidth, DEFAULT_APP_SETTINGS.tocWidth, 120, 500),
     splitWidth: readNumber(raw.splitWidth, DEFAULT_APP_SETTINGS.splitWidth, 20, 80),
     models,
