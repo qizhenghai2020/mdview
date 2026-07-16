@@ -17,7 +17,7 @@ const props = defineProps({
 
 const emit = defineEmits(["close"]);
 
-const SETTINGS_SECTIONS = new Set(["general", "models"]);
+const SETTINGS_SECTIONS = new Set(["general", "models", "about"]);
 
 function normalizeSection(section) {
   return SETTINGS_SECTIONS.has(section) ? section : "general";
@@ -319,6 +319,15 @@ function close() {
             <span class="settings-nav-icon">◇</span>
             模型配置
           </button>
+          <button
+            class="settings-nav-item"
+            :class="{ active: activeSection === 'about' }"
+            type="button"
+            @click="activeSection = 'about'"
+          >
+            <span class="settings-nav-icon">ⓘ</span>
+            关于我们
+          </button>
         </nav>
 
         <div class="settings-content">
@@ -348,7 +357,7 @@ function close() {
             </div>
           </template>
 
-          <template v-else>
+          <template v-else-if="activeSection === 'models'">
             <div class="settings-section-heading">
               <div>
                 <h3>模型配置</h3>
@@ -586,6 +595,41 @@ function close() {
               </div>
             </div>
           </template>
+
+          <template v-else>
+            <div class="settings-section-heading">
+              <div>
+                <h3>关于我们</h3>
+                <p>MD 查看器作者与联系信息</p>
+              </div>
+            </div>
+
+            <section class="about-card">
+              <div class="about-brand">
+                <div class="about-brand-mark" aria-hidden="true">MD</div>
+                <div>
+                  <span class="about-eyebrow">MARKDOWN VIEWER</span>
+                  <h4>MD 查看器</h4>
+                  <p>专注于 Markdown 与文本文件的阅读、编辑和整理。</p>
+                </div>
+              </div>
+
+              <dl class="about-details">
+                <div class="about-detail-row">
+                  <dt>作者</dt>
+                  <dd>qizhenghai</dd>
+                </div>
+                <div class="about-detail-row">
+                  <dt>邮箱</dt>
+                  <dd>522681219@qq.com</dd>
+                </div>
+                <div class="about-detail-row">
+                  <dt>绿泡泡</dt>
+                  <dd>cookieqzh</dd>
+                </div>
+              </dl>
+            </section>
+          </template>
         </div>
       </div>
     </section>
@@ -726,6 +770,94 @@ function close() {
   border: 1px solid var(--border-color);
   border-radius: 13px;
   background: var(--bg-toolbar);
+}
+
+.about-card {
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 13px;
+  background:
+    radial-gradient(
+      circle at 92% 8%,
+      color-mix(in srgb, var(--accent-color) 13%, transparent),
+      transparent 34%
+    ),
+    var(--bg-toolbar);
+}
+
+.about-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 26px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.about-brand-mark {
+  width: 66px;
+  height: 66px;
+  flex: 0 0 66px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent-color) 28%, transparent);
+}
+
+.about-eyebrow {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--accent-color);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.about-brand h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 22px;
+}
+
+.about-brand p {
+  margin: 7px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.about-details {
+  margin: 0;
+  padding: 8px 26px;
+}
+
+.about-detail-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 15px 0;
+}
+
+.about-detail-row + .about-detail-row {
+  border-top: 1px solid var(--border-color);
+}
+
+.about-detail-row dt {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.about-detail-row dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  user-select: text;
 }
 
 .persistence-row {
@@ -1197,6 +1329,10 @@ function close() {
 
   .settings-nav-item {
     width: auto;
+  }
+
+  .about-brand {
+    align-items: flex-start;
   }
 
   .model-manager {
