@@ -20,7 +20,10 @@ import {
   createSmartThemeStyleSheet,
   getSmartThemeWindowColor,
   isSmartThemeId,
+  loadSmartThemePromptHistory,
   loadSmartThemes,
+  rememberSmartThemePrompt,
+  saveSmartThemePromptHistory,
   saveSmartThemes,
 } from "./style-config/smartThemes";
 
@@ -174,12 +177,15 @@ const activeTocId = ref("");
 const isDragging = ref(false);
 const zoomLevel = ref(readPreference("zoom"));
 const browserZoomLevel = ref(100);
+const TOOLBAR_HEIGHT = 44;
 const currentTheme = ref(readPreference("theme"));
 const viewMode = ref(readPreference("viewMode")); // 'preview' | 'split' | 'live'
 const editorRef = ref(null);
 const previewRef = ref(null);
 const liveEditorRef = ref(null);
 const splitContainerRef = ref(null);
+const browserViewportWidth = ref(getBrowserViewportWidth());
+const browserViewportHeight = ref(getBrowserViewportHeight());
 const mermaidIdCounter = ref(0);
 const isExternalChange = ref(false);
 const isSaving = ref(false); // 保存中状态
@@ -211,6 +217,7 @@ const MAX_IMAGE_BASE64_LENGTH = 5 * 1024 * 1024;
 const MAX_IMAGE_BASE64_CACHE_ENTRIES = 48;
 let imageProcessingToken = 0;
 const smartThemes = ref(loadSmartThemes());
+const smartThemePromptHistory = ref(loadSmartThemePromptHistory());
 const MARKDOWN_EXTENSIONS = new Set([
   ".md",
   ".markdown",
@@ -261,14 +268,40 @@ const {
   resetStyleConfig,
 } = useStyleConfigPlugin(currentTheme, zoomLevel);
 
+function getBrowserViewportWidth() {
+  if (typeof window === "undefined") {
+    return 1280;
+  }
+
+  return Math.max(window.innerWidth || document.documentElement.clientWidth || 0, 1);
+}
+
+function getBrowserViewportHeight() {
+  if (typeof window === "undefined") {
+    return 800;
+  }
+
+  return Math.max(window.innerHeight || document.documentElement.clientHeight || 0, 1);
+}
+
+function syncBrowserZoomViewport() {
+  browserViewportWidth.value = getBrowserViewportWidth();
+  browserViewportHeight.value = getBrowserViewportHeight();
+}
+
 const appContainerStyle = computed(() => {
   const scale = browserZoomLevel.value / 100;
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const viewportWidth = Math.max(browserViewportWidth.value, 1);
+  const viewportHeight = Math.max(browserViewportHeight.value, 1);
+  const contentHeight = Math.max(viewportHeight - TOOLBAR_HEIGHT, 0);
 
   return {
     ...styleConfigVars.value,
     "--browser-zoom-scale": String(safeScale),
-    "--browser-zoom-size": `${100 / safeScale}%`,
+    "--browser-zoom-viewport-width": `${viewportWidth / safeScale}px`,
+    "--browser-zoom-viewport-height": `${viewportHeight / safeScale}px`,
+    "--browser-zoom-content-height": `${contentHeight / safeScale}px`,
   };
 });
 
@@ -327,6 +360,13 @@ watch(viewMode, (value) => persistPreference("viewMode", value));
 watch(showToc, (value) => persistPreference("showToc", value));
 watch(tocWidth, (value) => persistPreference("tocWidth", value));
 watch(splitEditorWidth, (value) => persistPreference("splitWidth", value));
+watch(
+  smartThemePromptHistory,
+  (value) => {
+    saveSmartThemePromptHistory(value);
+  },
+  { deep: true }
+);
 
 // 初始化 Mermaid
 mermaid.initialize({
@@ -645,6 +685,23 @@ function redo() {
   }
 }
 
+function resetEditedContent() {
+  if (!hasChanges.value) {
+    return;
+  }
+
+  const shouldReset = window.confirm(
+    `确定放弃当前未保存修改，并恢复到“${fileName.value}”上次保存/加载的内容吗？`
+  );
+  if (!shouldReset) {
+    return;
+  }
+
+  editedContent.value = originalContent.value;
+  markdownContent.value = originalContent.value;
+  showToast("已恢复到上次保存/加载的内容", "success");
+}
+
 // 编辑模式内容变化
 let lastEditedContent = "";
 watch(editedContent, (newVal, oldVal) => {
@@ -760,7 +817,6 @@ async function setFileWorkspace(paths, { openFirst = true } = {}) {
     workspaceFileCount.value = fileCount;
     expandedTreePaths.value = getDefaultExpandedTreePaths(roots);
     sidebarSection.value = "files";
-    showToc.value = true;
 
     if (workspace?.truncated) {
       showToast("目录文件较多，已显示前 10000 个文本文件", "error");
@@ -980,23 +1036,76 @@ function handleWindowFocus() {
   if (filePath.value) {
     refreshCurrentFile({ polling: true });
   }
+  syncBrowserZoomViewport();
+  syncWindowMaximizedState();
+}
+
+function handleWindowResize() {
+  syncBrowserZoomViewport();
   syncWindowMaximizedState();
 }
 
 // 主题切换
 const builtInThemes = [
-  { id: "default", name: "白昼" },
-  { id: "dark", name: "暗夜" },
-  { id: "elegant", name: "雅致" },
+  {
+    id: "default",
+    name: "白昼",
+    description: "经典明亮阅读界面，干净、直接、对比清晰。",
+    mode: "light",
+    style: "minimal",
+    builtIn: true,
+    locked: true,
+    palette: {
+      background: "#ffffff",
+      surface: "#f6f8fa",
+      accent: "#0969da",
+      text: "#24292f",
+    },
+  },
+  {
+    id: "dark",
+    name: "暗夜",
+    description: "深色护眼界面，适合夜间阅读和长时间编辑。",
+    mode: "dark",
+    style: "professional",
+    builtIn: true,
+    locked: true,
+    palette: {
+      background: "#0d1117",
+      surface: "#161b22",
+      accent: "#58a6ff",
+      text: "#c9d1d9",
+    },
+  },
+  {
+    id: "elegant",
+    name: "雅致",
+    description: "仿纸质阅读质感，强调温和留白和中文阅读舒适度。",
+    mode: "light",
+    style: "paper",
+    builtIn: true,
+    locked: true,
+    palette: {
+      background: "#f6f1e8",
+      surface: "#fffaf0",
+      accent: "#8b5e34",
+      text: "#2f2a24",
+    },
+  },
 ];
 
 const themes = computed(() => [
-  ...builtInThemes,
   ...smartThemes.value.map((theme) => ({
     id: theme.id,
     name: theme.name,
   })),
+  ...builtInThemes.map((theme) => ({
+    id: theme.id,
+    name: theme.name,
+  })),
 ]);
+
+const themeList = computed(() => [...smartThemes.value, ...builtInThemes]);
 
 let smartThemeStyleElement = null;
 
@@ -1106,7 +1215,7 @@ function toggleWindowMaximize(event) {
     return;
   }
   WindowToggleMaximiseFunc?.();
-  window.setTimeout(syncWindowMaximizedState, 120);
+  window.setTimeout(handleWindowResize, 120);
 }
 
 function closeWindow() {
@@ -1494,6 +1603,13 @@ function getActiveSmartThemeModel(modelId = "") {
 }
 
 function applySmartTheme(themeId) {
+  const builtInTheme = builtInThemes.find((item) => item.id === themeId) || null;
+  if (builtInTheme) {
+    setTheme(builtInTheme.id);
+    showToast(`已切换到内置主题：${builtInTheme.name}`, "success");
+    return;
+  }
+
   const theme = smartThemes.value.find((item) => item.id === themeId) || null;
   if (!theme) {
     showToast("主题不存在，可能已被删除。", "error");
@@ -1508,6 +1624,11 @@ function applySmartTheme(themeId) {
 }
 
 function deleteSmartTheme(themeId) {
+  if (!isSmartThemeId(themeId)) {
+    showToast("内置主题不能删除", "error");
+    return;
+  }
+
   const theme = smartThemes.value.find((item) => item.id === themeId) || null;
   if (!theme) {
     return;
@@ -1547,8 +1668,18 @@ function openSmartThemePrompt() {
 
 function confirmSmartThemePrompt(prompt) {
   smartThemePrompt.value = String(prompt || "").trim().slice(0, 800);
+  smartThemePromptHistory.value = rememberSmartThemePrompt(
+    smartThemePromptHistory.value,
+    smartThemePrompt.value
+  );
   showSmartThemePrompt.value = false;
   generateSmartTheme(smartThemePrompt.value);
+}
+
+function deleteSmartThemePromptHistoryItem(itemId) {
+  smartThemePromptHistory.value = smartThemePromptHistory.value.filter(
+    (item) => item.id !== itemId
+  );
 }
 
 async function generateSmartTheme(preference = smartThemePrompt.value) {
@@ -1889,6 +2020,19 @@ function stripHtmlTags(text) {
     .trim();
 }
 
+function normalizeHeadingText(text) {
+  return String(text || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\u200b/g, "")
+    .replace(/^[#]+\s*/, "")
+    .replace(/^\d+\.\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\[[ xX]\]\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function findLiveHeadingElement(id) {
   const container = liveEditorRef.value;
   if (!container) {
@@ -1907,10 +2051,19 @@ function findLiveHeadingElement(id) {
     return null;
   }
 
-  const plainText = stripHtmlTags(tocItem.text);
-  return Array.from(container.querySelectorAll(`h${tocItem.level}`)).find((node) => {
-    return node.textContent?.trim() === plainText;
+  const targetText = normalizeHeadingText(tocItem.text);
+  const matchedItems = tocItems.value.filter((item) => {
+    return item.level === tocItem.level && normalizeHeadingText(item.text) === targetText;
   });
+  const targetIndex = Math.max(
+    0,
+    matchedItems.findIndex((item) => item.id === id)
+  );
+  const matchedNodes = Array.from(
+    container.querySelectorAll(`h${tocItem.level}, .DOMD-H${tocItem.level}`)
+  ).filter((node) => normalizeHeadingText(node.textContent) === targetText);
+
+  return matchedNodes[targetIndex] || matchedNodes[0] || null;
 }
 
 // TOC 滚动 - 直接滚动，不用平滑效果
@@ -2094,7 +2247,8 @@ onMounted(async () => {
   document.addEventListener("keydown", handleKeyDown);
   window.addEventListener("wheel", handleBrowserZoomWheel, { passive: false });
   window.addEventListener("focus", handleWindowFocus);
-  window.addEventListener("resize", syncWindowMaximizedState);
+  window.addEventListener("resize", handleWindowResize);
+  syncBrowserZoomViewport();
   syncSmartThemeStyles();
   setTheme(currentTheme.value);
   applyZoom();
@@ -2129,6 +2283,7 @@ onMounted(async () => {
     }
 
     startFilePolling();
+    syncBrowserZoomViewport();
     await syncWindowMaximizedState();
 
     const loaded = await loadStartupFile();
@@ -2145,7 +2300,7 @@ onUnmounted(() => {
   document.removeEventListener("keydown", handleKeyDown);
   window.removeEventListener("wheel", handleBrowserZoomWheel);
   window.removeEventListener("focus", handleWindowFocus);
-  window.removeEventListener("resize", syncWindowMaximizedState);
+  window.removeEventListener("resize", handleWindowResize);
   document.removeEventListener("mousemove", handleResizeSplit);
   document.removeEventListener("mouseup", stopResizeSplit);
   document.removeEventListener("mousemove", handleResizeToc);
@@ -2322,6 +2477,27 @@ onUnmounted(() => {
           </svg>
           <span v-else class="loading-spinner-sm"></span>
           <span>保存</span>
+        </button>
+        <button
+          v-if="hasChanges"
+          class="toolbar-btn reset-edit-btn"
+          type="button"
+          :disabled="isSaving"
+          title="放弃未保存修改并恢复到上次保存/加载的内容"
+          @click="resetEditedContent"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M3 12a9 9 0 1 0 3-6.71" />
+            <polyline points="3 3 3 9 9 9" />
+          </svg>
+          <span>重置</span>
         </button>
       </div>
       <div class="toolbar-center" @dblclick="toggleWindowMaximize">
@@ -2735,7 +2911,7 @@ onUnmounted(() => {
         :themes="themes"
         :effective-metrics="styleConfigMetrics"
         :show-reset="hasCustomStyleConfig"
-        :smart-themes="smartThemes"
+        :smart-themes="themeList"
         :generating-smart-theme="isGeneratingSmartTheme"
         @theme-change="setTheme"
         @reset="resetPluginStyles"
@@ -2784,7 +2960,9 @@ onUnmounted(() => {
     <SmartThemePromptModal
       :visible="showSmartThemePrompt"
       :initial-prompt="smartThemePrompt"
+      :history-items="smartThemePromptHistory"
       @confirm="confirmSmartThemePrompt"
+      @delete-history="deleteSmartThemePromptHistoryItem"
       @close="showSmartThemePrompt = false"
     />
 
@@ -3199,13 +3377,44 @@ onUnmounted(() => {
 [data-ai-theme="true"] .toolbar-btn,
 [data-ai-theme="true"] .window-control,
 [data-ai-theme="true"] .view-mode-tab,
+[data-ai-theme="true"] .title-conflict-action,
+[data-ai-theme="true"] .icon-btn,
+[data-ai-theme="true"] .switch-track,
+[data-ai-theme="true"] .switch-track::after,
+[data-ai-theme="true"] .test-status-pill,
+[data-ai-theme="true"] .about-brand-mark,
+[data-ai-theme="true"] .conflict-mark,
+[data-ai-theme="true"] .prompt-icon,
+[data-ai-theme="true"] .theme-prompt-icon,
+[data-ai-theme="true"] .format-failure-icon,
+[data-ai-theme="true"] .browser-zoom-actions > span,
 [data-ai-theme="true"] .settings-primary-btn,
 [data-ai-theme="true"] .settings-secondary-btn,
 [data-ai-theme="true"] .settings-danger-btn,
 [data-ai-theme="true"] .settings-link-btn,
+[data-ai-theme="true"] .settings-close,
+[data-ai-theme="true"] .theme-prompt-primary-btn,
+[data-ai-theme="true"] .theme-prompt-secondary-btn,
+[data-ai-theme="true"] .theme-prompt-close,
+[data-ai-theme="true"] .prompt-primary-btn,
+[data-ai-theme="true"] .prompt-secondary-btn,
+[data-ai-theme="true"] .prompt-close,
+[data-ai-theme="true"] .preview-primary-btn,
+[data-ai-theme="true"] .preview-secondary-btn,
+[data-ai-theme="true"] .preview-close,
+[data-ai-theme="true"] .format-primary-btn,
+[data-ai-theme="true"] .format-secondary-btn,
+[data-ai-theme="true"] .format-text-btn,
 [data-ai-theme="true"] .theme-apply-btn,
 [data-ai-theme="true"] .theme-delete-btn,
-[data-ai-theme="true"] .generate-theme-btn {
+[data-ai-theme="true"] .generate-theme-btn,
+[data-ai-theme="true"] .conflict-footer button,
+[data-ai-theme="true"] .custom-header-remove,
+[data-ai-theme="true"] .color-swatch,
+[data-ai-theme="true"] .section-toggle,
+[data-ai-theme="true"] .preset-btn,
+[data-ai-theme="true"] .tab-btn,
+[data-ai-theme="true"] .seg-btn {
   border-radius: var(--ai-control-radius, 8px);
 }
 
@@ -3215,10 +3424,93 @@ onUnmounted(() => {
   box-shadow: none;
 }
 
+[data-ai-theme="true"] .settings-secondary-btn,
+[data-ai-theme="true"] .settings-danger-btn,
+[data-ai-theme="true"] .theme-prompt-secondary-btn,
+[data-ai-theme="true"] .prompt-secondary-btn,
+[data-ai-theme="true"] .preview-secondary-btn,
+[data-ai-theme="true"] .format-secondary-btn,
+[data-ai-theme="true"] .settings-link-btn,
+[data-ai-theme="true"] .format-text-btn,
+[data-ai-theme="true"] .theme-apply-btn,
+[data-ai-theme="true"] .theme-delete-btn,
+[data-ai-theme="true"] .icon-btn,
+[data-ai-theme="true"] .inline-reset-btn,
+[data-ai-theme="true"] .settings-close,
+[data-ai-theme="true"] .theme-prompt-close,
+[data-ai-theme="true"] .prompt-close,
+[data-ai-theme="true"] .preview-close,
+[data-ai-theme="true"] .custom-header-remove,
+[data-ai-theme="true"] .color-swatch,
+[data-ai-theme="true"] .conflict-footer button {
+  border-color: var(--ai-button-border, var(--border-color));
+  background: var(--ai-button-bg, transparent);
+  box-shadow: var(--ai-control-shadow, none);
+}
+
+[data-ai-theme="true"] .inline-reset-btn,
+[data-ai-theme="true"] .settings-link-btn,
+[data-ai-theme="true"] .format-text-btn,
+[data-ai-theme="true"] .custom-header-remove {
+  border: 1px solid var(--ai-button-border, var(--border-color));
+  text-decoration: none;
+}
+
+[data-ai-theme="true"] .inline-reset-btn {
+  padding: 2px 8px;
+}
+
+[data-ai-theme="true"] .color-swatch {
+  border: 1px solid var(--ai-button-border, var(--border-color));
+}
+
+[data-ai-theme="true"] .settings-primary-btn,
+[data-ai-theme="true"] .theme-prompt-primary-btn,
+[data-ai-theme="true"] .prompt-primary-btn,
+[data-ai-theme="true"] .preview-primary-btn,
+[data-ai-theme="true"] .format-primary-btn,
+[data-ai-theme="true"] .generate-theme-btn {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+  color: var(--ai-primary-button-text, #ffffff);
+  box-shadow: var(--ai-control-shadow, none);
+}
+
+[data-ai-theme="true"] .settings-primary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .theme-prompt-primary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .prompt-primary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .preview-primary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .format-primary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .generate-theme-btn:hover:not(:disabled) {
+  background: var(--accent-hover, var(--accent-color));
+  border-color: var(--accent-hover, var(--accent-color));
+}
+
 [data-ai-theme="true"] .toolbar-btn:hover,
 [data-ai-theme="true"] .window-control:hover,
-[data-ai-theme="true"] .view-mode-tab:hover {
+[data-ai-theme="true"] .view-mode-tab:hover,
+[data-ai-theme="true"] .icon-btn:hover,
+[data-ai-theme="true"] .settings-secondary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .theme-prompt-secondary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .prompt-secondary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .preview-secondary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .format-secondary-btn:hover:not(:disabled),
+[data-ai-theme="true"] .settings-link-btn:hover:not(:disabled),
+[data-ai-theme="true"] .inline-reset-btn:hover,
+[data-ai-theme="true"] .settings-close:hover,
+[data-ai-theme="true"] .theme-prompt-close:hover,
+[data-ai-theme="true"] .prompt-close:hover,
+[data-ai-theme="true"] .preview-close:hover,
+[data-ai-theme="true"] .format-text-btn:hover,
+[data-ai-theme="true"] .model-list-item:hover,
+[data-ai-theme="true"] .conflict-footer button:hover:not(:disabled) {
   background: var(--ai-button-hover-bg, var(--btn-hover));
+}
+
+[data-ai-theme="true"] .settings-danger-btn:hover:not(:disabled),
+[data-ai-theme="true"] .theme-delete-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, #ef4444 60%, var(--ai-button-border, var(--border-color)));
+  background: color-mix(in srgb, #ef4444 12%, transparent);
 }
 
 [data-ai-theme="true"] .toolbar-btn.active,
@@ -3243,10 +3535,26 @@ onUnmounted(() => {
   border-left-color: var(--ai-divider-color, var(--border-toolbar));
 }
 
+[data-ai-theme="true"] .switch-track {
+  background: color-mix(in srgb, var(--ai-divider-color, var(--border-color)) 88%, transparent);
+}
+
+[data-ai-theme="true"] .switch input:checked + .switch-track {
+  background: var(--accent-color);
+}
+
+[data-ai-theme="true"] .switch-track::after {
+  box-shadow: var(--ai-control-shadow, none);
+}
+
 [data-ai-theme="true"] .toc-sidebar,
 [data-ai-theme="true"] .style-config-panel,
 [data-ai-theme="true"] .settings-modal,
-[data-ai-theme="true"] .theme-prompt-modal {
+[data-ai-theme="true"] .theme-prompt-modal,
+[data-ai-theme="true"] .format-prompt-modal,
+[data-ai-theme="true"] .format-preview-modal,
+[data-ai-theme="true"] .format-failure-modal,
+[data-ai-theme="true"] .conflict-modal {
   background: var(--ai-sidebar-bg, var(--bg-toc));
   border-color: var(--ai-divider-color, var(--border-color));
   box-shadow: var(--shadow-sm);
@@ -3256,17 +3564,70 @@ onUnmounted(() => {
 [data-ai-theme="true"] .style-config-panel,
 [data-ai-theme="true"] .settings-modal,
 [data-ai-theme="true"] .theme-prompt-modal,
+[data-ai-theme="true"] .format-prompt-modal,
+[data-ai-theme="true"] .format-preview-modal,
+[data-ai-theme="true"] .format-failure-modal,
+[data-ai-theme="true"] .conflict-modal,
+[data-ai-theme="true"] .control-section,
+[data-ai-theme="true"] .override-card,
 [data-ai-theme="true"] .smart-theme-card,
 [data-ai-theme="true"] .smart-theme-empty,
+[data-ai-theme="true"] .preview-pane,
+[data-ai-theme="true"] .persistence-card,
+[data-ai-theme="true"] .browser-zoom-card,
+[data-ai-theme="true"] .about-card,
+[data-ai-theme="true"] .model-manager,
+[data-ai-theme="true"] .model-test-summary,
+[data-ai-theme="true"] .conflict-option,
 [data-ai-theme="true"] .loading-content,
 [data-ai-theme="true"] .toast-container {
   border-radius: var(--ai-card-radius, 14px);
 }
 
+[data-ai-theme="true"] .control-section,
+[data-ai-theme="true"] .override-card,
+[data-ai-theme="true"] .smart-theme-card,
+[data-ai-theme="true"] .smart-theme-empty,
+[data-ai-theme="true"] .preview-pane,
+[data-ai-theme="true"] .persistence-card,
+[data-ai-theme="true"] .browser-zoom-card,
+[data-ai-theme="true"] .about-card,
+[data-ai-theme="true"] .model-manager,
+[data-ai-theme="true"] .model-test-summary,
+[data-ai-theme="true"] .conflict-option {
+  background: var(--ai-surface-bg, var(--bg-primary));
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: var(--ai-surface-filter, none);
+}
+
+[data-ai-theme="true"] .panel-header,
+[data-ai-theme="true"] .section-toggle,
+[data-ai-theme="true"] .settings-header,
+[data-ai-theme="true"] .settings-nav,
+[data-ai-theme="true"] .model-list,
+[data-ai-theme="true"] .theme-prompt-header,
+[data-ai-theme="true"] .theme-prompt-actions,
+[data-ai-theme="true"] .format-prompt-header,
+[data-ai-theme="true"] .format-prompt-actions,
+[data-ai-theme="true"] .format-preview-header,
+[data-ai-theme="true"] .format-preview-actions,
+[data-ai-theme="true"] .pane-title {
+  background: var(--ai-elevated-bg, var(--bg-toolbar));
+}
+
 [data-ai-theme="true"] .toc-header,
 [data-ai-theme="true"] .settings-header,
 [data-ai-theme="true"] .theme-prompt-header,
+[data-ai-theme="true"] .theme-prompt-actions,
+[data-ai-theme="true"] .format-prompt-header,
+[data-ai-theme="true"] .format-prompt-actions,
+[data-ai-theme="true"] .format-preview-header,
+[data-ai-theme="true"] .format-preview-actions,
+[data-ai-theme="true"] .format-failure-copy,
+[data-ai-theme="true"] .pane-title,
 [data-ai-theme="true"] .section-toggle,
+[data-ai-theme="true"] .control-section,
+[data-ai-theme="true"] .override-card,
 [data-ai-theme="true"] .smart-theme-card {
   border-color: var(--ai-divider-color, var(--border-color));
 }
@@ -3274,6 +3635,7 @@ onUnmounted(() => {
 [data-ai-theme="true"] .toc-item,
 [data-ai-theme="true"] .file-tree-row,
 [data-ai-theme="true"] .settings-nav-item,
+[data-ai-theme="true"] .model-list-item,
 [data-ai-theme="true"] .inline-reset-btn {
   border-radius: var(--ai-control-radius, 8px);
 }
@@ -3286,7 +3648,10 @@ onUnmounted(() => {
 
 [data-ai-theme="true"] .toc-item.active,
 [data-ai-theme="true"] .file-tree-row.is-active,
-[data-ai-theme="true"] .settings-nav-item.active {
+[data-ai-theme="true"] .settings-nav-item.active,
+[data-ai-theme="true"] .model-list-item.active,
+[data-ai-theme="true"] .tab-btn.active,
+[data-ai-theme="true"] .seg-btn.active {
   background: var(--bg-toc-active);
   color: var(--accent-color);
 }
@@ -3306,11 +3671,26 @@ onUnmounted(() => {
 [data-ai-theme="true"] .plain-text-editor,
 [data-ai-theme="true"] .settings-field input,
 [data-ai-theme="true"] .theme-prompt-body textarea,
+[data-ai-theme="true"] .format-prompt-body textarea,
+[data-ai-theme="true"] .format-model-field select,
+[data-ai-theme="true"] .custom-header-row > input,
+[data-ai-theme="true"] .color-input,
 [data-ai-theme="true"] .app-select {
   border-color: var(--ai-divider-color, var(--border-color));
   border-radius: var(--ai-control-radius, 8px);
   background: var(--ai-surface-bg, var(--bg-secondary));
   box-shadow: var(--ai-control-shadow, none);
+}
+
+[data-ai-theme="true"] .app-slider,
+[data-ai-theme="true"] .preview-scroll {
+  border-radius: var(--ai-control-radius, 8px);
+}
+
+[data-ai-theme="true"] .preset-dot,
+[data-ai-theme="true"] .theme-swatches span,
+[data-ai-theme="true"] .model-status-dot {
+  border-radius: 999px;
 }
 
 [data-ai-theme="true"] .split-divider::before,
@@ -3470,18 +3850,24 @@ body {
 }
 #app {
   height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
 }
 
 .app-container {
-  width: var(--browser-zoom-size, 100%);
-  height: var(--browser-zoom-size, 100%);
+  width: var(--browser-zoom-viewport-width, 100%);
+  height: var(--browser-zoom-viewport-height, 100vh);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
   color: var(--text-primary);
   position: relative;
   transform-origin: 0 0;
-  zoom: var(--browser-zoom-scale, 1);
+  transform: scale(var(--browser-zoom-scale, 1));
+  will-change: transform;
+  overflow: hidden;
 }
 
 .drag-overlay {
@@ -3610,6 +3996,7 @@ body {
   border-radius: 5px;
   cursor: pointer;
   font-size: 12px;
+  white-space: nowrap;
   transition: all 0.15s ease;
   --wails-draggable: no-drag;
   -webkit-app-region: no-drag;
@@ -3628,6 +4015,8 @@ body {
 }
 .toolbar-btn span {
   line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .toolbar-btn svg {
   width: 14px;
@@ -4025,7 +4414,7 @@ body {
   min-width: 0;
   display: flex;
   overflow: hidden;
-  height: calc(100vh - 44px);
+  height: var(--browser-zoom-content-height, calc(100vh - 44px));
 }
 
 .split-container {
@@ -4115,7 +4504,7 @@ body {
 .live-editor-view {
   flex: 1;
   overflow-y: auto;
-  max-height: calc(100vh - 44px);
+  max-height: var(--browser-zoom-content-height, calc(100vh - 44px));
   padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
   /* background: var(--bg-primary); */
   color: var(--viewer-global-color, var(--text-primary));
@@ -4430,6 +4819,17 @@ body {
   background: var(--accent-color);
 }
 
+.reset-edit-btn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.reset-edit-btn:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
 /* Toast 提示样式 */
 .toast-container {
   position: fixed;
@@ -4487,7 +4887,7 @@ body {
   overflow-x: hidden;
   padding: var(--viewer-preview-padding-y, 20px) var(--viewer-preview-padding-x, 20px);
   min-width: 0;
-  height: calc(100vh - 44px);
+  height: var(--browser-zoom-content-height, calc(100vh - 44px));
 }
 
 .back-to-top-btn {

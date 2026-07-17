@@ -24,6 +24,15 @@ function readBoolean(value, fallback) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function readTheme(value, fallback) {
+  const theme = String(value || "").trim();
+  if (!theme) {
+    return fallback;
+  }
+
+  return theme.slice(0, 120);
+}
+
 function normalizeModel(rawModel, index) {
   const model = rawModel && typeof rawModel === "object" ? rawModel : {};
   const modelId = String(model.id || `model-${Date.now()}-${index}`);
@@ -91,9 +100,7 @@ export function mergeAppSettings(rawSettings) {
     ...DEFAULT_APP_SETTINGS,
     ...raw,
     persistence,
-    theme: ["default", "dark", "elegant"].includes(raw.theme)
-      ? raw.theme
-      : DEFAULT_APP_SETTINGS.theme,
+    theme: readTheme(raw.theme, DEFAULT_APP_SETTINGS.theme),
     zoom: readNumber(raw.zoom, DEFAULT_APP_SETTINGS.zoom, 50, 200),
     viewMode: VIEW_MODES.has(raw.viewMode) ? raw.viewMode : DEFAULT_APP_SETTINGS.viewMode,
     showToc: readBoolean(raw.showToc, DEFAULT_APP_SETTINGS.showToc),

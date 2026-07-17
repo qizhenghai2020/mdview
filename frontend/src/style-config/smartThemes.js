@@ -1,10 +1,13 @@
 export const SMART_THEME_STORAGE_KEY = "md-viewer.smart-themes";
 export const SMART_THEME_PREFIX = "ai-theme-";
+export const SMART_THEME_PROMPT_HISTORY_STORAGE_KEY = "md-viewer.smart-theme-prompts";
 
 const MAX_THEME_NAME_LENGTH = 24;
 const MAX_THEME_DESCRIPTION_LENGTH = 80;
 const MAX_THEME_SOURCE_PROMPT_LENGTH = 300;
 const MAX_STORED_SMART_THEMES = 12;
+const MAX_STORED_SMART_THEME_PROMPTS = 20;
+const MAX_THEME_PROMPT_LENGTH = 800;
 
 const STYLE_LABELS = {
   glass: "玻璃",
@@ -258,6 +261,15 @@ function safeText(value, fallback, maxLength) {
     .trim();
 
   return (text || fallback).slice(0, maxLength);
+}
+
+function createPromptHistoryId() {
+  const rawId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  return `smart-theme-prompt-${String(rawId).replace(/[^a-z0-9-]/gi, "").toLowerCase()}`;
 }
 
 function stripOuterFence(value) {
@@ -695,6 +707,68 @@ export function saveSmartThemes(themes) {
 
 export function isSmartThemeId(themeId) {
   return String(themeId || "").startsWith(SMART_THEME_PREFIX);
+}
+
+function normalizeSmartThemePromptHistoryItem(rawItem) {
+  if (!rawItem || typeof rawItem !== "object") {
+    return null;
+  }
+
+  const prompt = String(rawItem.prompt || "").trim().slice(0, MAX_THEME_PROMPT_LENGTH);
+  const createdAt = String(rawItem.createdAt || "");
+
+  return {
+    id: String(rawItem.id || createPromptHistoryId()),
+    prompt,
+    createdAt: createdAt || new Date().toISOString(),
+  };
+}
+
+function normalizeSmartThemePromptHistory(items) {
+  return (Array.isArray(items) ? items : [])
+    .map(normalizeSmartThemePromptHistoryItem)
+    .filter(Boolean)
+    .slice(0, MAX_STORED_SMART_THEME_PROMPTS);
+}
+
+export function loadSmartThemePromptHistory() {
+  try {
+    const raw = localStorage.getItem(SMART_THEME_PROMPT_HISTORY_STORAGE_KEY);
+    const items = raw ? JSON.parse(raw) : [];
+    return normalizeSmartThemePromptHistory(items);
+  } catch (error) {
+    console.warn("加载智能主题生成历史失败，已回退为空列表", error);
+    return [];
+  }
+}
+
+export function saveSmartThemePromptHistory(items) {
+  try {
+    const normalizedItems = normalizeSmartThemePromptHistory(items);
+    localStorage.setItem(
+      SMART_THEME_PROMPT_HISTORY_STORAGE_KEY,
+      JSON.stringify(normalizedItems)
+    );
+    return normalizedItems;
+  } catch (error) {
+    console.warn("保存智能主题生成历史失败", error);
+    return normalizeSmartThemePromptHistory(items);
+  }
+}
+
+export function rememberSmartThemePrompt(items, prompt) {
+  const normalizedPrompt = String(prompt || "").trim().slice(0, MAX_THEME_PROMPT_LENGTH);
+  const normalizedItems = normalizeSmartThemePromptHistory(items);
+  const dedupedItems = normalizedItems.filter((item) => item.prompt !== normalizedPrompt);
+
+  return [
+    {
+      id: createPromptHistoryId(),
+      prompt: normalizedPrompt,
+      createdAt: new Date().toISOString(),
+    },
+    ...dedupedItems,
+  ].slice(0, MAX_STORED_SMART_THEME_PROMPTS);
 }
 
 export function createSmartThemeStyleSheet(themes) {

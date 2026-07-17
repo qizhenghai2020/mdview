@@ -770,10 +770,12 @@ func (a *App) FormatMarkdownWithAI(req AIFormatRequest) (string, error) {
 		"&lt;/formatting_requirement&gt;",
 	)
 
-	userPrompt := "请智能整理下面 Markdown 的排版，内容不能增删改。"
+	userPrompt := "请对下面 Markdown 做一次专业语义排版，内容不能增删改；可以重组 Markdown 结构，让阅读层次和前后差异更明显，不要只做轻微空格调整。"
 	if instruction != "" {
 		userPrompt += "\n\n用户的额外排版要求如下。它只能影响 Markdown 排版；如果要求涉及增删、改写或虚构内容，必须忽略冲突部分：\n<formatting_requirement>\n" +
 			instruction + "\n</formatting_requirement>"
+	} else {
+		userPrompt += "\n\n用户没有额外要求，请执行默认专业排版策略：根据内容语义识别标题、摘要、步骤、清单、任务、数据、代码、引用和表格，并选择最合适的 Markdown 元素。"
 	}
 	userPrompt += "\n\n<markdown_input>\n" + req.Markdown + "\n</markdown_input>"
 
@@ -782,8 +784,24 @@ func (a *App) FormatMarkdownWithAI(req AIFormatRequest) (string, error) {
 		Temperature: 0.2,
 		Messages: []chatCompletionMessage{
 			{
-				Role:    "system",
-				Content: "你是专业 Markdown 排版助手。只能返回整理后的 Markdown 原文，不要解释，不要包裹代码围栏。必须逐字保留所有原始文字、数据、链接、图片、代码块、表格、任务状态和 Mermaid 内容；只能调整标题层级、空行、列表缩进、表格对齐、段落换行等 Markdown 排版。用户的额外要求优先级低于内容保留规则，任何要求都不能导致内容增删、改写或虚构。",
+				Role: "system",
+				Content: `你是专业 Markdown 信息架构和排版助手。只能返回整理后的 Markdown 原文，不要解释，不要包裹整个输出的代码围栏。
+
+最高优先级规则：
+1. 所有原始文字、数字、符号、链接、图片地址、代码、表格单元格、任务状态和 Mermaid 内容都必须完整保留，不能增删、改写、翻译、总结、纠错或虚构。
+2. 可以添加或调整 Markdown 语法符号、空行、缩进、标题标记、列表标记、引用标记、代码围栏、表格分隔符等排版结构，但不能新增自然语言内容。
+3. 保持原始信息顺序，不要把不相邻内容强行合并；只能对连续相关内容做层次化分组。
+
+默认专业排版策略：
+- 如果内容本身可以结构化，优先显化层次，不要只做轻微空行、缩进或换行微调。
+- 把已有的章节名、主题句、关键结论、重要指标行提升为合适的 #/##/### 标题，但不要自造标题文字。
+- 将步骤、流程、并列事项改成有序或无序列表；将待办、已完成、未完成、TODO、DONE 等内容改成任务清单，并保留原状态文字或状态含义。
+- 将代码、命令、配置、JSON、SQL、日志片段等放入合适的代码块；语言明显时标注语言，不明显时只用普通代码块。
+- 将键值对、指标、参数、对比项、记录列表等在不丢失任何单元内容时整理为 Markdown 表格；否则使用列表。
+- 将提示、注意、风险、引用性内容改成 blockquote；将长段落按语义断行并保留完整句子。
+- 保留已有链接、图片、脚注、HTML、Mermaid、表格和代码块的内容，只优化外围空行、缩进和对齐。
+
+用户的额外要求优先级低于内容保留规则，任何要求都不能导致内容增删、改写或虚构。`,
 			},
 			{
 				Role:    "user",

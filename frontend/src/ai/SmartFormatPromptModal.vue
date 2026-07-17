@@ -64,7 +64,7 @@ function handleKeydown(event) {
         <div>
           <span class="eyebrow">SMART FORMAT</span>
           <h2 id="format-prompt-title">这次希望怎样排版？</h2>
-          <p>可以补充侧重点；不填写时使用默认规则。AI 只调整 Markdown 结构，不会改动正文内容。</p>
+          <p>可以补充侧重点；不填写时会按语义自动重组标题、清单、任务、表格和代码块。AI 只调整 Markdown 结构，不会改动正文内容。</p>
         </div>
         <button class="prompt-close" type="button" title="关闭" @click="emit('close')">×</button>
       </header>
@@ -77,10 +77,10 @@ function handleKeydown(event) {
           v-model="instruction"
           maxlength="1000"
           rows="6"
-          placeholder="例如：任务清单优先突出；层级不要超过三级；表格保持紧凑。"
+          placeholder="例如：把关键结论提成标题；步骤改成编号列表；TODO 改成任务清单；参数或数据尽量整理成表格。"
         ></textarea>
         <div class="prompt-meta">
-          <span>留空 = 使用专业 Markdown 默认排版</span>
+          <span>留空 = 自动按语义重组标题 / 清单 / 任务 / 表格 / 代码块</span>
           <span>{{ instruction.length }} / 1000</span>
         </div>
       </div>

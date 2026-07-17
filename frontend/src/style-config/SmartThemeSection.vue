@@ -17,6 +17,10 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["generate", "apply", "delete"]);
+
+function isBuiltInTheme(theme) {
+  return Boolean(theme?.builtIn || theme?.locked);
+}
 </script>
 
 <template>
@@ -36,12 +40,13 @@ const emit = defineEmits(["generate", "apply", "delete"]);
         v-for="theme in props.themes"
         :key="theme.id"
         class="smart-theme-card"
-        :class="{ active: props.currentTheme === theme.id }"
+        :class="{ active: props.currentTheme === theme.id, builtin: isBuiltInTheme(theme) }"
       >
         <div class="smart-theme-main">
           <div class="smart-theme-title">
             <strong>{{ theme.name }}</strong>
             <div class="smart-theme-tags">
+              <span v-if="isBuiltInTheme(theme)">内置</span>
               <span>{{ theme.mode === "dark" ? "深色" : "浅色" }}</span>
               <span>{{ getSmartThemeStyleLabel(theme.style) }}</span>
             </div>
@@ -67,6 +72,7 @@ const emit = defineEmits(["generate", "apply", "delete"]);
               {{ props.currentTheme === theme.id ? "使用中" : "切换" }}
             </button>
             <button
+              v-if="!isBuiltInTheme(theme)"
               class="theme-delete-btn"
               type="button"
               title="删除主题"
@@ -147,7 +153,7 @@ const emit = defineEmits(["generate", "apply", "delete"]);
 }
 
 .smart-theme-list {
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -179,6 +185,16 @@ const emit = defineEmits(["generate", "apply", "delete"]);
 .smart-theme-card.active {
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+.smart-theme-card.builtin {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-color) 7%, transparent),
+      transparent 42%
+    ),
+    var(--bg-toolbar);
 }
 
 .smart-theme-main {
