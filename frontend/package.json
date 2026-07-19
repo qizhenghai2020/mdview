@@ -5,14 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "node ../scripts/generate-builtin-key.mjs && vite build",
+    "preview": "vite preview",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@do-md/core-react": "^0.2.14",
-    "@fontpkg/alibaba-pu-hui-ti-3-0": "^3.1.2",
-    "@fontsource/noto-sans-sc": "^5.2.9",
-    "@fontsource/noto-serif-sc": "^5.2.9",
     "@vitejs/plugin-react": "^5.2.0",
     "github-markdown-css": "^5.9.0",
     "highlight.js": "^11.11.1",
@@ -26,6 +24,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.0",
+    "patch-package": "^8.0.1",
     "vite": "^7.0.0"
   }
 }

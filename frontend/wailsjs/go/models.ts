@@ -1,4 +1,4 @@
-export namespace main {
+export namespace backend {
 	
 	export class AIRequestHeader {
 	    name: string;
@@ -24,6 +24,8 @@ export namespace main {
 	    timeout: number;
 	    formatTimeout: number;
 	    headers: AIRequestHeader[];
+	    requestTemplate: string;
+	    responseMode?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AIModelConfig(source);
@@ -38,6 +40,8 @@ export namespace main {
 	        this.timeout = source["timeout"];
 	        this.formatTimeout = source["formatTimeout"];
 	        this.headers = this.convertValues(source["headers"], AIRequestHeader);
+	        this.requestTemplate = source["requestTemplate"];
+	        this.responseMode = source["responseMode"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -61,6 +65,7 @@ export namespace main {
 	export class AIFormatRequest {
 	    markdown: string;
 	    instruction: string;
+	    format: string;
 	    model: AIModelConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -71,6 +76,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.markdown = source["markdown"];
 	        this.instruction = source["instruction"];
+	        this.format = source["format"];
 	        this.model = this.convertValues(source["model"], AIModelConfig);
 	    }
 	
@@ -93,6 +99,38 @@ export namespace main {
 		}
 	}
 	
+	export class AIModelTestResult {
+	    success: boolean;
+	    message: string;
+	    content?: string;
+	    contentPath?: string;
+	    endpoint?: string;
+	    method?: string;
+	    requestHeaders?: Record<string, string>;
+	    requestBody?: string;
+	    statusCode?: number;
+	    responseHeaders?: Record<string, Array<string>>;
+	    responseBody?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AIModelTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.content = source["content"];
+	        this.contentPath = source["contentPath"];
+	        this.endpoint = source["endpoint"];
+	        this.method = source["method"];
+	        this.requestHeaders = source["requestHeaders"];
+	        this.requestBody = source["requestBody"];
+	        this.statusCode = source["statusCode"];
+	        this.responseHeaders = source["responseHeaders"];
+	        this.responseBody = source["responseBody"];
+	    }
+	}
 	
 	export class AIThemeRequest {
 	    preference: string;
@@ -127,6 +165,46 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class DesignDraftRecord {
+	    sourcePath: string;
+	    fileName: string;
+	    html: string;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DesignDraftRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourcePath = source["sourcePath"];
+	        this.fileName = source["fileName"];
+	        this.html = source["html"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class ExternalFontInfo {
+	    value: string;
+	    label: string;
+	    family: string;
+	    stack: string;
+	    dataUrl: string;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExternalFontInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.value = source["value"];
+	        this.label = source["label"];
+	        this.family = source["family"];
+	        this.stack = source["stack"];
+	        this.dataUrl = source["dataUrl"];
+	        this.source = source["source"];
+	    }
 	}
 	export class FileTreeNode {
 	    name: string;

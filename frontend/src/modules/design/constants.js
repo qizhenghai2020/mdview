@@ -1,0 +1,1 @@
+export const DEFAULT_DESIGN_EXPORT_STATUS_TEXT = "未修改";

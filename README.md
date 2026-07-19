@@ -12,7 +12,7 @@
 - **广泛文本格式支持** - 除 Markdown 外，也支持 TXT、日志、配置、代码等常见文本文件，并兼容多种中文编码
 - **外部文件自动同步** - 当文件被记事本或其他编辑器修改后，可自动同步最新内容；若本地与外部同时修改，会触发冲突保护
 - **任务清单增强** - 对任务计划、待办清单等 Markdown 内容提供更醒目的样式表达，便于区分已完成与未完成事项
-- **AI 智能排版** - 可调用已配置模型对当前 Markdown 进行智能重排版，在保留原始语义的前提下优化标题层级、列表、代码块与任务结构
+- **AI AI排版** - 可调用已配置模型对当前 Markdown 进行智能重排版，在保留原始语义的前提下优化标题层级、列表、代码块与任务结构
 - **模型管理与测试** - 内置模型配置面板，支持启用状态控制、连接测试、自定义请求头与失败后切换其他模型
 - **AI 智能主题** - 可通过输入需求生成整套界面主题，覆盖配色、按钮、滚动条、面板等 UI 细节，并支持主题历史、切换与删除
 - **样式配置面板** - 提供独立样式配置能力，可调整主题、排版、字号、元素覆盖、任务样式等，且采用可拆卸式配置模块设计
@@ -23,13 +23,13 @@
 
 ## 截图
 
-![预览模式](screenshots/preview.png)
-![分屏编辑](screenshots/split.png)
-![计划任务](screenshots/task.png)
-![AI生成主题](screenshots/theme_ai.png)
-![主题1](screenshots/theme1.png)
-![主题2](screenshots/theme2.png)
-![主题3](screenshots/theme3.png)
+![预览模式](docs/screenshots/preview.png)
+![分屏编辑](docs/screenshots/split.png)
+![计划任务](docs/screenshots/task.png)
+![AI生成主题](docs/screenshots/theme_ai.png)
+![主题1](docs/screenshots/theme1.png)
+![主题2](docs/screenshots/theme2.png)
+![主题3](docs/screenshots/theme3.png)
 
 ## 安装
 

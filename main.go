@@ -4,7 +4,7 @@ import (
 	"embed"
 	"os"
 	"strings"
-
+	"mdviewer/backend"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -15,21 +15,45 @@ import (
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	app := backend.NewApp()
 
-	// 检查命令行参数，获取要打开的文件路径
-	args := os.Args
-	if len(args) > 1 {
-		filePath := strings.Trim(args[1], "\"")
-		app.SetStartupArg(filePath)
+	args := os.Args[1:]
+	isDesignExportWindow := false
+	for i := 0; i < len(args); i++ {
+		arg := strings.Trim(args[i], "\"")
+		if arg == "--design-export" && i+1 < len(args) {
+			isDesignExportWindow = true
+			app.SetDesignExportStartupArg(strings.Trim(args[i+1], "\""))
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			continue
+		}
+		if !isDesignExportWindow {
+			app.SetStartupArg(arg)
+		}
+	}
+
+	title := "MD 查看器"
+	width := 1200
+	height := 800
+	minWidth := 800
+	minHeight := 600
+	if isDesignExportWindow {
+		title = "HTML设计器"
+		width = 1280
+		height = 820
+		minWidth = 960
+		minHeight = 640
 	}
 
 	err := wails.Run(&options.App{
-		Title:            "MD 查看器",
-		Width:            1200,
-		Height:           800,
-		MinWidth:         800,
-		MinHeight:        600,
+		Title:            title,
+		Width:            width,
+		Height:           height,
+		MinWidth:         minWidth,
+		MinHeight:        minHeight,
 		Frameless:        true,
 		AssetServer:      &assetserver.Options{Assets: assets},
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 255},
@@ -41,7 +65,8 @@ func main() {
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
-		OnStartup: app.startup,
+		OnStartup:  backend.StartupHandler(app),
+		OnShutdown: backend.ShutdownHandler(app),
 		Bind: []interface{}{
 			app,
 		},
