@@ -1231,12 +1231,6 @@ body.theme-radius-flat {
 }
 .smart-format-btn {
   margin-right: 8px;
-  color: var(--accent-color);
-  /* background: color-mix(in srgb, var(--accent-color) 9%, transparent); */
-}
-.smart-format-btn:hover {
-  color: #ffffff;
-  background: var(--accent-color);
 }
 .settings-btn {
   margin-left: 2px;

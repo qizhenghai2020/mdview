@@ -194,11 +194,7 @@ func (a *App) SetDesignExportStartupArg(arg string) {
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	if a.startupMode == startupModeDesignExport {
-		runtime.WindowMaximise(ctx)
-	} else {
-		runtime.WindowCenter(ctx)
-	}
+	runtime.WindowMaximise(ctx)
 	runtime.WindowShow(ctx)
 }
 

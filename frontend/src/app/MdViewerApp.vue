@@ -2882,7 +2882,7 @@ const {
 });
 // 显示欢迎内容
 function showWelcome() {
-  markdownContent.value = `# MD 查看器
+  const welcomeContent = `# MD 查看器
 
 欢迎使用 MD 查看器！
 
@@ -2932,6 +2932,8 @@ sequenceDiagram
 | Ctrl+Z | 撤销 |
 
 `;
+
+  replaceContentFromDisk(welcomeContent);
 }
 
 function tocIndent(level) {
@@ -2968,6 +2970,9 @@ onMounted(async () => {
   setTheme(currentTheme.value);
   applyZoom();
   await initializeDesktopSession();
+  if (!isDesignExportWindow.value) {
+    viewMode.value = DEFAULT_APP_SETTINGS.viewMode;
+  }
 });
 
 onUnmounted(() => {
