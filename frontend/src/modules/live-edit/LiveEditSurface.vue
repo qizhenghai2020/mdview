@@ -25,11 +25,19 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  filePath: {
+    type: String,
+    default: "",
+  },
   resolveImagePath: {
     type: Function,
     default: null,
   },
   readImageAsBase64: {
+    type: Function,
+    default: null,
+  },
+  requestAiInsertContent: {
     type: Function,
     default: null,
   },
@@ -53,8 +61,10 @@ function areBridgePropsEqual(previousProps, nextProps) {
   return (
     previousProps.value === nextProps.value &&
     previousProps.placeholder === nextProps.placeholder &&
+    previousProps.filePath === nextProps.filePath &&
     previousProps.resolveImagePath === nextProps.resolveImagePath &&
     previousProps.readImageAsBase64 === nextProps.readImageAsBase64 &&
+    previousProps.requestAiInsertContent === nextProps.requestAiInsertContent &&
     previousProps.onChange === nextProps.onChange &&
     previousProps.onReady === nextProps.onReady
   );
@@ -98,8 +108,10 @@ function createBridgeProps() {
   return {
     value: props.modelValue ?? "",
     placeholder: props.placeholder,
+    filePath: props.filePath,
     resolveImagePath: props.resolveImagePath,
     readImageAsBase64: props.readImageAsBase64,
+    requestAiInsertContent: props.requestAiInsertContent,
     onChange: handleBridgeChange,
     onReady: handleBridgeReady,
   };
@@ -153,6 +165,13 @@ watch(
 );
 
 watch(
+  () => props.filePath,
+  () => {
+    syncBridge();
+  }
+);
+
+watch(
   () => props.resolveImagePath,
   () => {
     syncBridge();
@@ -161,6 +180,13 @@ watch(
 
 watch(
   () => props.readImageAsBase64,
+  () => {
+    syncBridge();
+  }
+);
+
+watch(
+  () => props.requestAiInsertContent,
   () => {
     syncBridge();
   }

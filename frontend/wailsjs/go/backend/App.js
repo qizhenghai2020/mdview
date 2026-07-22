@@ -14,6 +14,10 @@ export function FormatMarkdownWithAI(arg1) {
   return window['go']['backend']['App']['FormatMarkdownWithAI'](arg1);
 }
 
+export function GenerateContentWithAI(arg1) {
+  return window['go']['backend']['App']['GenerateContentWithAI'](arg1);
+}
+
 export function GenerateThemeWithAI(arg1) {
   return window['go']['backend']['App']['GenerateThemeWithAI'](arg1);
 }

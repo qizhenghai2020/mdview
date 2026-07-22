@@ -15,12 +15,17 @@ export function getAIProgressPresentation(kind = "") {
       };
     case "html-format":
       return {
-        logPrefix: "[HTML AI排版进度]",
+        logPrefix: "[HTML AI 排版进度]",
         fallbackMessage: "HTML AI 排版处理中...",
+      };
+    case "content-generate":
+      return {
+        logPrefix: "[AI 生成进度]",
+        fallbackMessage: "AI 内容生成中...",
       };
     default:
       return {
-        logPrefix: "[AI排版进度]",
+        logPrefix: "[AI 排版进度]",
         fallbackMessage: "智能排版处理中...",
       };
   }

@@ -8,6 +8,8 @@ export function DeleteDesignDraft(arg1:string):Promise<void>;
 
 export function FormatMarkdownWithAI(arg1:backend.AIFormatRequest):Promise<string>;
 
+export function GenerateContentWithAI(arg1:backend.AIGenerateContentRequest):Promise<string>;
+
 export function GenerateThemeWithAI(arg1:backend.AIThemeRequest):Promise<string>;
 
 export function GetAppVersion():Promise<string>;

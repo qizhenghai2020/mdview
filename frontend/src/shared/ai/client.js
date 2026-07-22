@@ -10,31 +10,39 @@ export function createAiClient({
   testModel,
   formatDocument,
   generateTheme,
+  generateContent,
   eventsOn,
   eventsOff,
 } = {}) {
   const supportsTestModel = typeof testModel === "function";
   const supportsFormatDocument = typeof formatDocument === "function";
   const supportsGenerateTheme = typeof generateTheme === "function";
+  const supportsGenerateContent = typeof generateContent === "function";
   const supportsProgressSubscription =
     typeof eventsOn === "function" && typeof eventsOff === "function";
   const capabilities = Object.freeze({
     testModel: supportsTestModel,
     formatDocument: supportsFormatDocument,
     generateTheme: supportsGenerateTheme,
+    generateContent: supportsGenerateContent,
     progressSubscription: supportsProgressSubscription,
   });
+
   const requestTestModel = pickHandler(
     testModel,
     createUnavailableHandler("请在桌面应用中测试模型")
   );
   const requestFormatDocument = pickHandler(
     formatDocument,
-    createUnavailableHandler("请在桌面应用中使用智能排版")
+    createUnavailableHandler("请在桌面应用中使用 AI 排版")
   );
   const requestGenerateTheme = pickHandler(
     generateTheme,
     createUnavailableHandler("请在桌面应用中生成智能主题")
+  );
+  const requestGenerateContent = pickHandler(
+    generateContent,
+    createUnavailableHandler("请在桌面应用中生成内容")
   );
   const requestEventsOn = pickHandler(eventsOn, noop);
   const requestEventsOff = pickHandler(eventsOff, noop);
@@ -44,6 +52,7 @@ export function createAiClient({
       supportsTestModel ||
       supportsFormatDocument ||
       supportsGenerateTheme ||
+      supportsGenerateContent ||
       supportsProgressSubscription,
     capabilities,
     supports(capability) {
@@ -60,6 +69,12 @@ export function createAiClient({
     },
     generateTheme(request = {}) {
       return requestGenerateTheme({
+        ...request,
+        model: buildAIModelPayload(request?.model),
+      });
+    },
+    generateContent(request = {}) {
+      return requestGenerateContent({
         ...request,
         model: buildAIModelPayload(request?.model),
       });

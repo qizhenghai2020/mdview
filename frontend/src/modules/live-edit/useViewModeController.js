@@ -122,35 +122,36 @@ export function useViewModeController({
     });
   }
 
-  function scrollElementToTop(element) {
+  function scrollElementToTop(element, behavior = "smooth") {
     if (!element) {
       return;
     }
 
     if (typeof element.scrollTo === "function") {
-      element.scrollTo({ top: 0, behavior: "smooth" });
+      element.scrollTo({ top: 0, behavior });
       return;
     }
 
     element.scrollTop = 0;
   }
 
-  function scrollDocumentToTop() {
+  function scrollDocumentToTop(behavior = "smooth") {
     if (viewMode.value === "split") {
-      scrollElementToTop(editorRef.value);
-      scrollElementToTop(getPreviewScrollElement());
+      scrollElementToTop(editorRef.value, behavior);
+      scrollElementToTop(getPreviewScrollElement(), behavior);
       return;
     }
 
     if (viewMode.value === "live") {
-      scrollElementToTop(liveEditorRef.value);
+      scrollElementToTop(liveEditorRef.value, behavior);
       scrollElementToTop(
-        liveEditorRef.value?.querySelector?.(".plain-text-editor, .html-source-editor")
+        liveEditorRef.value?.querySelector?.(".plain-text-editor, .html-source-editor"),
+        behavior
       );
       return;
     }
 
-    scrollElementToTop(getPreviewScrollElement());
+    scrollElementToTop(getPreviewScrollElement(), behavior);
   }
 
   function prepareEditingBuffer(sourceContent = markdownContent.value) {

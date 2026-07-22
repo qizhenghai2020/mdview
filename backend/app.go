@@ -56,6 +56,14 @@ type AIThemeRequest struct {
 	Model        AIModelConfig `json:"model"`
 }
 
+type AIGenerateContentRequest struct {
+	Kind     string        `json:"kind"`
+	Language string        `json:"language,omitempty"`
+	Prompt   string        `json:"prompt"`
+	Template string        `json:"template,omitempty"`
+	Model    AIModelConfig `json:"model"`
+}
+
 type AIFormatProgressEvent struct {
 	Kind          string `json:"kind"`
 	Stage         string `json:"stage"`
@@ -218,5 +226,5 @@ func (a *App) GetDesignExportPayloadPath() string {
 
 // GetAppVersion returns the application version
 func (a *App) GetAppVersion() string {
-	return "1.0.2"
+	return "1.0.3"
 }

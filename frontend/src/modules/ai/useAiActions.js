@@ -28,12 +28,14 @@ export function useAiActions({
 }) {
   const {
     isSmartFormatting,
+    isGeneratingSmartContent,
     showSmartFormatFailure,
     showSmartFormatPrompt,
     showSmartFormatPreview,
     showSmartThemePrompt,
     isGeneratingSmartTheme,
     smartFormatRequestId,
+    smartContentRequestId,
     designSmartFormatRequestId,
     smartThemeRequestId,
     showDesignSmartFormatPrompt,
@@ -166,6 +168,13 @@ export function useAiActions({
       return {
         requestIdRef: smartFormatRequestId,
         activeRef: isSmartFormatting,
+        resetProgressOnCancel: true,
+      };
+    }
+    if (kind === "content-generate") {
+      return {
+        requestIdRef: smartContentRequestId,
+        activeRef: isGeneratingSmartContent,
         resetProgressOnCancel: true,
       };
     }
@@ -426,6 +435,87 @@ export function useAiActions({
     });
   }
 
+  async function generateInsertContent({
+    kind = "code",
+    modelId = "",
+    language = "",
+    prompt = "",
+    template = "",
+    unavailableMessage = "请在桌面应用中使用 AI 生成",
+    emptyMessage = "请输入生成需求",
+    startMessage = "正在准备 AI 生成请求",
+    operationLabel = "AI 生成",
+    logPrefix = "[AI生成]",
+    ignoreResultMessage = "[AI生成] 等待已被关闭，忽略本次返回结果",
+    ignoreErrorMessage = "[AI生成] 等待已被关闭，忽略本次失败结果",
+  } = {}) {
+    if (!ensureAiCapability("generateContent", unavailableMessage)) {
+      return "";
+    }
+
+    const model = resolveActionModel(modelId, {
+      missingModelMessage: "请先在设置中添加并启用模型",
+      missingConfigMessage: "当前模型缺少接口地址或模型名称，请先补充",
+    });
+    if (!model) {
+      return "";
+    }
+
+    const normalizedPrompt = sanitizeAITextInput(prompt, 1200);
+    if (!normalizedPrompt) {
+      showToast(emptyMessage, "error");
+      return "";
+    }
+
+    const normalizedTemplate = sanitizeAITextInput(template, 2000);
+    const normalizedLanguage = sanitizeAITextInput(language, 120);
+    let generatedContent = "";
+
+    await runManagedAiRequest({
+      kind: "content-generate",
+      model,
+      startMessage,
+      clearFailure: true,
+      logPrefix,
+      operationLabel,
+      logMeta: {
+        modelId: model.id,
+        modelName: getAIModelDisplayName(model, ""),
+        baseUrl: model.baseUrl,
+        language: normalizedLanguage,
+        promptLength: normalizedPrompt.length,
+        templateLength: normalizedTemplate.length,
+      },
+      ignoreResultMessage,
+      ignoreErrorMessage,
+      execute: async () => {
+        const rawContent = await aiClient.generateContent({
+          kind,
+          language: normalizedLanguage,
+          prompt: normalizedPrompt,
+          template: normalizedTemplate,
+          model,
+        });
+        const normalizedContent = stripOuterMarkdownFence(rawContent);
+        return {
+          rawContent,
+          generatedContent: normalizedContent,
+          model,
+        };
+      },
+      logSuccess: ({ generatedContent: returnedContent }) => {
+        generatedContent = returnedContent;
+        console.info(`${logPrefix} 已收到模型返回`, {
+          resultLength: returnedContent.length,
+          preview: returnedContent.slice(0, 200),
+        });
+        setSmartFormatProgress(loadingText, "已收到模型返回", `内容长度：${returnedContent.length}`);
+      },
+    });
+
+    return generatedContent;
+  }
+
   function resolveActionModel(
     modelId = "",
     {
@@ -557,6 +647,7 @@ export function useAiActions({
       !progress ||
       (progress.kind !== "markdown-format" &&
         progress.kind !== "html-format" &&
+        progress.kind !== "content-generate" &&
         progress.kind !== "theme")
     ) {
       return;
@@ -844,5 +935,6 @@ export function useAiActions({
     confirmSmartThemePrompt,
     deleteSmartThemePromptHistoryItem,
     generateSmartTheme,
+    generateInsertContent,
   };
 }

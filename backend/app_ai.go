@@ -322,6 +322,133 @@ JSON 必须符合这个结构：
 	return string(normalized), nil
 }
 
+// GenerateContentWithAI asks an OpenAI-compatible model for code or Mermaid content.
+func (a *App) GenerateContentWithAI(req AIGenerateContentRequest) (string, error) {
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		return "", fmt.Errorf("生成需求不能为空")
+	}
+
+	modelName, err := resolveAIModelName(req.Model)
+	if err != nil {
+		return "", err
+	}
+
+	timeout := clampTimeout(req.Model.FormatTimeout, 300, 30, 1800)
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	if kind != "mermaid" {
+		kind = "code"
+	}
+
+	language := strings.TrimSpace(req.Language)
+	template := strings.TrimSpace(req.Template)
+
+	promptRunes := []rune(prompt)
+	if len(promptRunes) > 1200 {
+		prompt = string(promptRunes[:1200])
+	}
+	templateRunes := []rune(template)
+	if len(templateRunes) > 2000 {
+		template = string(templateRunes[:2000])
+	}
+
+	var systemPrompt string
+	var userPrompt strings.Builder
+	if kind == "mermaid" {
+		systemPrompt = `你是 Mermaid 图表生成助手。只返回可以直接插入的 Mermaid 源码，不要解释，不要 Markdown 说明，不要额外围栏。
+要求：
+1. 根据用户需求生成准确的 Mermaid 语法。
+2. 如果提供了模板，请沿用其图类型和结构。
+3. 允许返回 flowchart、sequenceDiagram、classDiagram、gantt、pie、erDiagram 等常见图。
+4. 输出必须尽量简洁，并保证可直接渲染。`
+		userPrompt.WriteString("请根据下面需求生成 Mermaid 内容。\n")
+	} else {
+		systemPrompt = `你是代码片段生成助手。只返回可直接插入的代码内容，不要解释，不要 Markdown 说明，不要额外围栏。
+要求：
+1. 根据用户需求生成对应语言的代码。
+2. 如果提供了模板，请沿用其结构和风格。
+3. 代码应尽量简洁、完整、可直接使用。`
+		userPrompt.WriteString("请根据下面需求生成代码内容。\n")
+	}
+
+	userPrompt.WriteString("\n用户需求：\n")
+	userPrompt.WriteString(prompt)
+
+	if language != "" {
+		userPrompt.WriteString("\n\n目标语言：\n")
+		userPrompt.WriteString(language)
+	}
+
+	if template != "" {
+		userPrompt.WriteString("\n\n参考模板：\n")
+		if kind == "mermaid" {
+			userPrompt.WriteString("```mermaid\n")
+		} else if language != "" {
+			userPrompt.WriteString("```")
+			userPrompt.WriteString(language)
+			userPrompt.WriteString("\n")
+		} else {
+			userPrompt.WriteString("```\n")
+		}
+		userPrompt.WriteString(template)
+		if !strings.HasSuffix(template, "\n") {
+			userPrompt.WriteString("\n")
+		}
+		userPrompt.WriteString("```")
+	}
+
+	progress := newAIProgressReporter(a, "content-generate")
+	progress.emitStarted("正在准备 AI 生成请求", "请求由桌面端后端发起。")
+
+	endpoint, body, err := prepareAIRequest(req.Model, aiRequestContext{
+		Kind:         "content-generate",
+		ModelName:    modelName,
+		Temperature:  0.2,
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt.String(),
+		Instruction:  prompt,
+		Messages: []chatCompletionMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt.String()},
+		},
+	})
+	if err != nil {
+		progress.emitFailure("AI 生成请求准备失败", err.Error(), nil)
+		return "", err
+	}
+
+	execution, content, _, err := a.executeAIContentLifecycle(
+		req.Model,
+		endpoint,
+		body,
+		timeout,
+		maxAIFormatResponseBytes,
+		progress,
+		aiContentLifecycleOptions{
+			streamMessage:              "模型正在流式生成内容",
+			requestFailureMessage:      "内容生成请求失败",
+			requestErrorPrefix:         "请求内容生成失败",
+			interfaceFailureMessage:    "内容生成接口返回错误",
+			explicitFailureMessage:     "内容生成显式错误",
+			httpErrorFormat:            "内容生成请求失败，HTTP %d",
+			parsingMessage:             "正在解析生成结果",
+			contentParseFailureMessage: "内容生成解析失败",
+			contentExtractedMessage:    "已提取生成内容",
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+
+	generated := strings.TrimSpace(stripOuterMarkdownFence(content))
+	if generated == "" {
+		return "", fmt.Errorf("模型没有返回可用内容")
+	}
+
+	progress.emitCompleted("后端处理完成", "已生成可插入内容", len(generated), execution)
+	return generated, nil
+}
+
 // TestAIModel sends a tiny prompt to verify that the configured model can respond.
 func (a *App) TestAIModel(model AIModelConfig) (string, error) {
 	result := a.TestAIModelDetailed(model)

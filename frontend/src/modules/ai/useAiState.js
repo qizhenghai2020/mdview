@@ -10,12 +10,14 @@ export function useAiState({
   maxSmartFormatProgressSteps = DEFAULT_MAX_SMART_FORMAT_PROGRESS_STEPS,
 } = {}) {
   const isSmartFormatting = ref(false);
+  const isGeneratingSmartContent = ref(false);
   const showSmartFormatFailure = ref(false);
   const showSmartFormatPrompt = ref(false);
   const showSmartFormatPreview = ref(false);
   const showSmartThemePrompt = ref(false);
   const isGeneratingSmartTheme = ref(false);
   const smartFormatRequestId = ref(0);
+  const smartContentRequestId = ref(0);
   const designSmartFormatRequestId = ref(0);
   const smartThemeRequestId = ref(0);
   const showDesignSmartFormatPrompt = ref(false);
@@ -37,7 +39,11 @@ export function useAiState({
   const smartThemePromptHistory = ref(loadSmartThemePromptHistory());
 
   const isDetailedAiLoading = computed(
-    () => isSmartFormatting.value || isDesignSmartFormatting.value || isGeneratingSmartTheme.value
+    () =>
+      isSmartFormatting.value ||
+      isGeneratingSmartContent.value ||
+      isDesignSmartFormatting.value ||
+      isGeneratingSmartTheme.value
   );
 
   const activeAiLoadingKind = computed(() => {
@@ -46,6 +52,9 @@ export function useAiState({
     }
     if (isSmartFormatting.value) {
       return "markdown-format";
+    }
+    if (isGeneratingSmartContent.value) {
+      return "content-generate";
     }
     if (isGeneratingSmartTheme.value) {
       return "theme";
@@ -93,7 +102,7 @@ export function useAiState({
       resetSmartFormatProgress();
     }
 
-    loadingText.value = String(message || "智能排版中，请稍候...");
+    loadingText.value = String(message || "智能处理中，请稍候...");
     smartFormatProgressDetail.value = String(detail || "").trim();
     pushSmartFormatProgress(message, detail);
   }
@@ -119,12 +128,14 @@ export function useAiState({
 
   return {
     isSmartFormatting,
+    isGeneratingSmartContent,
     showSmartFormatFailure,
     showSmartFormatPrompt,
     showSmartFormatPreview,
     showSmartThemePrompt,
     isGeneratingSmartTheme,
     smartFormatRequestId,
+    smartContentRequestId,
     designSmartFormatRequestId,
     smartThemeRequestId,
     showDesignSmartFormatPrompt,

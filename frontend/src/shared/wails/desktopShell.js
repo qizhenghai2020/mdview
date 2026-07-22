@@ -12,6 +12,7 @@ export function createDesktopShell() {
     testModel: app.TestAIModel,
     formatDocument: app.FormatMarkdownWithAI,
     generateTheme: app.GenerateThemeWithAI,
+    generateContent: app.GenerateContentWithAI,
     eventsOn: runtime.EventsOn,
     eventsOff: runtime.EventsOff,
   });

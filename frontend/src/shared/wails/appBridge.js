@@ -2,6 +2,7 @@ import {
   BuildFileWorkspace,
   DeleteDesignDraft,
   FormatMarkdownWithAI,
+  GenerateContentWithAI,
   GenerateThemeWithAI,
   GetDesignDraft,
   GetDesignExportPayloadPath,
@@ -115,7 +116,11 @@ function createAppBridge(app = {}) {
     WriteFile: pickFunction(app.WriteFile, createResolvedValue(undefined)),
     FormatMarkdownWithAI: pickFunction(
       app.FormatMarkdownWithAI,
-      createRejectedValue("请在桌面应用中使用智能排版")
+      createRejectedValue("请在桌面应用中使用 AI 排版")
+    ),
+    GenerateContentWithAI: pickFunction(
+      app.GenerateContentWithAI,
+      createRejectedValue("请在桌面应用中使用 AI 生成")
     ),
     GenerateThemeWithAI: pickFunction(
       app.GenerateThemeWithAI,
@@ -164,6 +169,7 @@ export function createWailsBridge() {
     ReadFileAndUpdateWatch,
     WriteFile,
     FormatMarkdownWithAI,
+    GenerateContentWithAI,
     GenerateThemeWithAI,
     TestAIModel: TestAIModelDetailed || TestAIModel,
   });

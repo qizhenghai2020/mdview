@@ -26,11 +26,10 @@
           </svg>
         </div>
         <div>
-          <span class="eyebrow">AI FORMAT</span>
-          <h2 id="format-prompt-title">这次希望怎样排版？</h2>
+          <span class="eyebrow">{{ props.eyebrow }}</span>
+          <h2 id="format-prompt-title">{{ props.title }}</h2>
           <p>
-            可以补充侧重点；不填写时会按语义自动重组标题、清单、任务、表格和代码块。AI
-            只调整 Markdown 结构，不会改动正文内容。
+            {{ props.description }}
           </p>
         </div>
         <button class="prompt-close" type="button" title="关闭" @click="emit('close')">
@@ -39,23 +38,27 @@
       </header>
 
       <div class="format-prompt-body">
-        <label for="smart-format-instruction">排版要求（可选）</label>
+        <label for="smart-format-instruction">{{ props.inputLabel }}</label>
         <textarea
           id="smart-format-instruction"
           ref="textareaRef"
           v-model="instruction"
-          maxlength="1000"
+          :maxlength="props.maxLength"
           rows="6"
-          placeholder="例如：把关键结论提成标题；步骤改成编号列表；TODO 改成任务清单；参数或数据尽量整理成表格。"
+          :placeholder="props.placeholder"
         ></textarea>
         <div class="prompt-meta">
-          <span>留空 = 自动按语义重组标题 / 清单 / 任务 / 表格 / 代码块</span>
-          <span>{{ instruction.length }} / 1000</span>
+          <span>{{ props.metaHint }}</span>
+          <span>{{ instruction.length }} / {{ props.maxLength }}</span>
         </div>
-        <div class="recommendation-panel" aria-label="常用排版推荐">
-          <span class="recommendation-label">常用推荐</span>
+        <div
+          v-if="resolvedRecommendations.length"
+          class="recommendation-panel"
+          :aria-label="props.recommendationLabel"
+        >
+          <span class="recommendation-label">{{ props.recommendationLabel }}</span>
           <button
-            v-for="item in RECOMMENDED_INSTRUCTIONS"
+            v-for="item in resolvedRecommendations"
             :key="item.label"
             type="button"
             class="recommendation-chip"
@@ -73,7 +76,7 @@
           取消
         </button>
         <button class="prompt-primary-btn" type="button" @click="confirm">
-          开始AI排版
+          {{ props.confirmText }}
         </button>
       </footer>
     </section>
@@ -81,7 +84,7 @@
 </template>
 
 <script setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
 const props = defineProps({
   visible: {
@@ -91,6 +94,48 @@ const props = defineProps({
   initialInstruction: {
     type: String,
     default: "",
+  },
+  eyebrow: {
+    type: String,
+    default: "AI FORMAT",
+  },
+  title: {
+    type: String,
+    default: "这次希望怎样排版？",
+  },
+  inputLabel: {
+    type: String,
+    default: "排版要求（可选）",
+  },
+  description: {
+    type: String,
+    default:
+      "可以补充侧重点；不填写时会按语义自动重组标题、清单、任务、表格和代码块。AI 只调整 Markdown 结构，不会改动正文内容。",
+  },
+  placeholder: {
+    type: String,
+    default:
+      "例如：把关键结论提成标题；步骤改成编号列表；TODO 改成任务清单；参数或数据尽量整理成表格。",
+  },
+  metaHint: {
+    type: String,
+    default: "留空 = 自动按语义重组标题 / 清单 / 任务 / 表格 / 代码块",
+  },
+  confirmText: {
+    type: String,
+    default: "开始AI排版",
+  },
+  recommendationLabel: {
+    type: String,
+    default: "常用推荐",
+  },
+  recommendations: {
+    type: Array,
+    default: () => [],
+  },
+  maxLength: {
+    type: Number,
+    default: 1000,
   },
 });
 
@@ -124,6 +169,11 @@ const RECOMMENDED_INSTRUCTIONS = [
       "把参数、对比项、时间安排、人员分工或数据类内容尽量整理成 Markdown 表格；说明文字保留在表格前后。",
   },
 ];
+const resolvedRecommendations = computed(() =>
+  Array.isArray(props.recommendations) && props.recommendations.length > 0
+    ? props.recommendations
+    : RECOMMENDED_INSTRUCTIONS
+);
 
 watch(
   () => props.visible,
@@ -132,7 +182,7 @@ watch(
       return;
     }
 
-    instruction.value = props.initialInstruction || "";
+  instruction.value = props.initialInstruction || "";
     await nextTick();
     textareaRef.value?.focus();
   }

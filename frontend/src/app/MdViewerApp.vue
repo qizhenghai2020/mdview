@@ -638,6 +638,7 @@
                     class="split-editor"
                     v-model="editedContent"
                     @input="handlePlainTextEditorInput"
+                    @contextmenu="handleSplitEditorContextMenu"
                     @scroll="handleEditorScroll"
                     @scrollend="resetSyncState"
                     :placeholder="editorPlaceholder"
@@ -684,6 +685,8 @@
                     ref="liveEditSurfaceRef"
                     v-model="editedContent"
                     :placeholder="LIVE_EDIT_PLACEHOLDER"
+                    :file-path="filePath"
+                    :request-ai-insert-content="requestAiInsertContentWithPrompt"
                     @ready="handleLiveEditorReady"
                   />
                 </div>
@@ -815,6 +818,22 @@
         :initial-instruction="designSmartFormatInstruction"
         @confirm="confirmDesignSmartFormatPrompt"
         @close="closeDesignSmartFormatPrompt"
+      />
+
+      <SmartFormatPromptModal
+        :visible="aiInsertPromptState.visible"
+        :eyebrow="aiInsertPromptState.eyebrow"
+        :title="aiInsertPromptState.title"
+        :description="aiInsertPromptState.description"
+        :input-label="aiInsertPromptState.inputLabel"
+        :placeholder="aiInsertPromptState.placeholder"
+        :meta-hint="aiInsertPromptState.metaHint"
+        :confirm-text="aiInsertPromptState.confirmText"
+        :recommendation-label="aiInsertPromptState.recommendationLabel"
+        :recommendations="aiInsertPromptState.recommendations"
+        :max-length="aiInsertPromptState.maxLength"
+        @confirm="confirmAiInsertPrompt"
+        @close="closeAiInsertPrompt"
       />
 
       <SmartThemePromptModal
@@ -1084,6 +1103,378 @@
         </section>
       </div>
 
+      <Teleport to="body">
+        <div
+          v-if="splitInsertMenuState"
+          ref="splitInsertMenuRef"
+          class="md-live-context-menu"
+          :style="{
+            left: `${splitInsertMenuState.x}px`,
+            top: `${splitInsertMenuState.y}px`,
+          }"
+          role="menu"
+          @contextmenu.prevent
+        >
+          <section
+            v-for="section in splitInsertMenuSections"
+            :key="section.title"
+            class="md-live-context-menu-section"
+          >
+            <div class="md-live-context-menu-title">{{ section.title }}</div>
+            <button
+              v-for="item in section.items"
+              :key="item.id"
+              type="button"
+              :class="[
+                'md-live-context-menu-item',
+                item.children?.length ? 'has-children' : '',
+              ]"
+              role="menuitem"
+              @mousedown.prevent
+              @mouseenter="openSplitInsertSubmenu(item, $event)"
+              @click="
+                item.children?.length
+                  ? openSplitInsertSubmenu(item, $event)
+                  : handleSplitInsertMenuItem(item)
+              "
+            >
+              <span class="md-live-context-menu-item-label">{{ item.label }}</span>
+              <span class="md-live-context-menu-item-desc">{{ item.description }}</span>
+              <span v-if="item.children?.length" class="md-live-context-menu-item-arrow">›</span>
+            </button>
+          </section>
+        </div>
+      </Teleport>
+
+      <Teleport to="body">
+        <div
+          v-if="splitInsertSubmenuState"
+          ref="splitInsertSubmenuRef"
+          class="md-live-context-submenu"
+          :style="{
+            left: `${splitInsertSubmenuState.x}px`,
+            top: `${splitInsertSubmenuState.y}px`,
+          }"
+          role="menu"
+          @contextmenu.prevent
+        >
+          <button
+            v-for="item in splitInsertSubmenuState.items"
+            :key="item.id"
+            type="button"
+            :class="[
+              'md-live-context-menu-item',
+              item.children?.length ? 'has-children' : '',
+            ]"
+            role="menuitem"
+            @mousedown.prevent
+            @mouseenter="
+              item.children?.length
+                ? openSplitInsertNestedSubmenu(item, $event)
+                : closeSplitInsertNestedSubmenu()
+            "
+            @click="
+              item.children?.length
+                ? openSplitInsertNestedSubmenu(item, $event)
+                : handleSplitInsertMenuItem(item)
+            "
+          >
+            <span class="md-live-context-menu-item-label">{{ item.label }}</span>
+            <span class="md-live-context-menu-item-desc">{{ item.description }}</span>
+            <span v-if="item.children?.length" class="md-live-context-menu-item-arrow">›</span>
+          </button>
+        </div>
+      </Teleport>
+
+      <Teleport to="body">
+        <div
+          v-if="splitInsertNestedSubmenuState"
+          ref="splitInsertNestedSubmenuRef"
+          class="md-live-context-submenu"
+          :style="{
+            left: `${splitInsertNestedSubmenuState.x}px`,
+            top: `${splitInsertNestedSubmenuState.y}px`,
+          }"
+          role="menu"
+          @contextmenu.prevent
+        >
+          <button
+            v-for="item in splitInsertNestedSubmenuState.items"
+            :key="item.id"
+            type="button"
+            class="md-live-context-menu-item"
+            role="menuitem"
+            @mousedown.prevent
+            @click="handleSplitInsertMenuItem(item)"
+          >
+            <span class="md-live-context-menu-item-label">{{ item.label }}</span>
+            <span class="md-live-context-menu-item-desc">{{ item.description }}</span>
+          </button>
+        </div>
+      </Teleport>
+
+      <input
+        ref="splitImageInputRef"
+        class="md-insert-hidden-input"
+        type="file"
+        accept="image/*"
+        @change="handleSplitImageFileChange"
+      />
+
+      <Teleport to="body">
+        <div
+          v-if="splitInsertDialogState"
+          class="md-insert-dialog-backdrop"
+          @mousedown="closeSplitInsertDialog"
+        >
+          <section
+            class="md-insert-dialog"
+            role="dialog"
+            aria-modal="true"
+            :aria-label="splitInsertDialogTitle"
+            @mousedown.stop
+          >
+            <header class="md-insert-dialog-header">
+              <div>
+                <h3>{{ splitInsertDialogTitle }}</h3>
+                <p>{{ splitInsertDialogDescription }}</p>
+              </div>
+              <button
+                type="button"
+                class="md-insert-dialog-close"
+                @click="closeSplitInsertDialog"
+              >
+                ×
+              </button>
+            </header>
+
+            <div class="md-insert-dialog-body">
+              <template v-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.heading">
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">标题级别</span>
+                  <select
+                    v-model.number="splitInsertDialogState.draft.level"
+                    class="md-insert-input"
+                  >
+                    <option v-for="level in [1, 2, 3, 4, 5, 6]" :key="level" :value="level">
+                      {{ getHeadingLevelLabel(level) }} (H{{ level }})
+                    </option>
+                  </select>
+                </label>
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">标题内容</span>
+                  <input
+                    v-model="splitInsertDialogState.draft.title"
+                    class="md-insert-input"
+                    type="text"
+                    :placeholder="`输入${getHeadingLevelLabel(splitInsertDialogState.draft.level)}`"
+                  />
+                </label>
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">正文内容</span>
+                  <textarea
+                    v-model="splitInsertDialogState.draft.body"
+                    class="md-insert-textarea"
+                    placeholder="可选，插入标题下方正文"
+                  ></textarea>
+                </label>
+              </template>
+
+              <template v-else-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.quote">
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">引用内容</span>
+                  <textarea
+                    v-model="splitInsertDialogState.draft.text"
+                    class="md-insert-textarea"
+                    placeholder="输入引用内容，支持多行"
+                  ></textarea>
+                </label>
+              </template>
+
+              <template
+                v-else-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.taskList"
+              >
+                <div class="md-insert-field">
+                  <div class="md-insert-field-head">
+                    <span class="md-insert-field-label">任务项</span>
+                    <button type="button" class="md-insert-mini-btn" @click="addSplitTaskItem">
+                      新增一项
+                    </button>
+                  </div>
+                  <div class="md-insert-list-editor">
+                    <div
+                      v-for="(task, index) in splitInsertDialogState.draft.items"
+                      :key="`split-task-${index}`"
+                      class="md-insert-list-row"
+                    >
+                      <label class="md-insert-check">
+                        <input v-model="task.checked" type="checkbox" />
+                        <span>已完成</span>
+                      </label>
+                      <input
+                        v-model="task.text"
+                        class="md-insert-input"
+                        type="text"
+                        placeholder="任务内容"
+                      />
+                      <button
+                        type="button"
+                        class="md-insert-mini-btn danger"
+                        @click="removeSplitTaskItem(index)"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <template v-else-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.table">
+                <div class="md-insert-field">
+                  <div class="md-insert-field-head">
+                    <span class="md-insert-field-label">表格内容</span>
+                    <div class="md-insert-inline-actions">
+                      <button type="button" class="md-insert-mini-btn" @click="addSplitTableColumn">
+                        新增列
+                      </button>
+                      <button type="button" class="md-insert-mini-btn" @click="addSplitTableRow">
+                        新增行
+                      </button>
+                    </div>
+                  </div>
+                  <div class="md-insert-table-editor">
+                    <table class="md-insert-table-grid">
+                      <thead>
+                        <tr>
+                          <th class="md-insert-table-index-cell">#</th>
+                          <th
+                            v-for="(header, headerIndex) in splitInsertDialogState.draft.headers"
+                            :key="`split-header-${headerIndex}`"
+                            class="md-insert-table-cell is-header"
+                          >
+                            <input
+                              v-model="splitInsertDialogState.draft.headers[headerIndex]"
+                              class="md-insert-input"
+                              type="text"
+                              :placeholder="`列${headerIndex + 1}`"
+                            />
+                            <button
+                              type="button"
+                              class="md-insert-mini-btn danger"
+                              :disabled="splitInsertDialogState.draft.headers.length <= 1"
+                              @click="removeSplitTableColumn(headerIndex)"
+                            >
+                              删列
+                            </button>
+                          </th>
+                          <th class="md-insert-table-action-head">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="(row, rowIndex) in splitInsertDialogState.draft.rows"
+                          :key="`split-row-${rowIndex}`"
+                        >
+                          <td class="md-insert-table-index-cell">{{ rowIndex + 1 }}</td>
+                          <td
+                            v-for="(cell, columnIndex) in row"
+                            :key="`split-cell-${rowIndex}-${columnIndex}`"
+                            class="md-insert-table-cell"
+                          >
+                            <input
+                              v-model="splitInsertDialogState.draft.rows[rowIndex][columnIndex]"
+                              class="md-insert-input"
+                              type="text"
+                              :placeholder="`第${rowIndex + 1}行第${columnIndex + 1}列`"
+                            />
+                          </td>
+                          <td class="md-insert-table-row-actions">
+                            <button
+                              type="button"
+                              class="md-insert-mini-btn danger"
+                              @click="removeSplitTableRow(rowIndex)"
+                            >
+                              删行
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
+
+              <template v-else-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.image">
+                <div class="md-insert-upload-hint">
+                  图片会在右键菜单中直接调起文件选择器，选中后自动插入到当前位置。
+                </div>
+              </template>
+
+              <template v-else-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.code">
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">代码语言</span>
+                  <input
+                    v-model="splitInsertDialogState.draft.language"
+                    class="md-insert-input"
+                    type="text"
+                    list="split-insert-language-list"
+                    placeholder="例如：javascript"
+                  />
+                  <datalist id="split-insert-language-list">
+                    <option
+                      v-for="language in CODE_LANGUAGE_SUGGESTIONS"
+                      :key="language"
+                      :value="language"
+                    ></option>
+                  </datalist>
+                </label>
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">代码内容</span>
+                  <textarea
+                    v-model="splitInsertDialogState.draft.code"
+                    class="md-insert-textarea is-code"
+                    placeholder="输入代码内容"
+                  ></textarea>
+                </label>
+              </template>
+
+              <template
+                v-else-if="splitInsertDialogState.item.type === INSERT_ITEM_TYPES.mermaid"
+              >
+                <label class="md-insert-field">
+                  <span class="md-insert-field-label">Mermaid 内容</span>
+                  <textarea
+                    v-model="splitInsertDialogState.draft.code"
+                    class="md-insert-textarea is-code"
+                    placeholder="支持直接粘贴 ```mermaid ... ``` 或只粘贴内部代码"
+                  ></textarea>
+                  <span class="md-insert-field-tip">
+                    支持直接粘贴完整的 ` ```mermaid ` 代码块，也支持只粘贴内部内容，保存时会自动整理。
+                  </span>
+                </label>
+              </template>
+
+              <div v-if="splitInsertDialogState.error" class="md-insert-dialog-error">
+                {{ splitInsertDialogState.error }}
+              </div>
+            </div>
+
+            <footer class="md-insert-dialog-actions">
+              <button type="button" class="md-insert-dialog-btn" @click="closeSplitInsertDialog">
+                取消
+              </button>
+              <button
+                type="button"
+                class="md-insert-dialog-btn primary"
+                @click="confirmSplitInsertDialog"
+              >
+                插入内容
+              </button>
+            </footer>
+          </section>
+        </div>
+      </Teleport>
+
       <SmartFormatFailureModal
         v-model:model-id="smartFormatRetryModelId"
         :visible="showSmartFormatFailure"
@@ -1117,6 +1508,25 @@ import {
   loadLiveEditSurfaceComponent,
   preloadLiveEditorResources,
 } from "@/modules/live-edit/liveEditorLoader";
+import {
+  CODE_LANGUAGE_SUGGESTIONS,
+  INSERT_ITEM_TYPES,
+  MENU_ITEM_ACTIONS,
+  buildMarkdownContextMenuSections,
+  createAiGenerationRequest,
+  buildInsertSnippet,
+  createDirectInsertSnippet,
+  createInsertDraft,
+  createGeneratedInsertSnippet,
+  getHashHeadingContext,
+  getHeadingLevelLabel,
+  normalizeHeadingLevel,
+  replaceHashHeadingLevel,
+  resolveAdjacentMenuPosition,
+  resolveFloatingMenuPosition,
+  shouldOpenInsertDialog,
+} from "@/modules/live-edit/insertMenuShared";
+import { saveImageToDocumentDirectory } from "@/modules/live-edit/imageInsert";
 import { useHtmlPreviewDocument } from "@/modules/preview/useHtmlPreviewDocument";
 import { usePreviewImageResolver } from "@/modules/preview/usePreviewImageResolver";
 import { usePerfInstrumentation } from "@/shared/perf/usePerfInstrumentation";
@@ -1237,6 +1647,15 @@ const previewRef = ref(null);
 const liveEditorRef = ref(null);
 const liveEditSurfaceRef = ref(null);
 const splitContainerRef = ref(null);
+const splitInsertMenuRef = ref(null);
+const splitInsertSubmenuRef = ref(null);
+const splitInsertNestedSubmenuRef = ref(null);
+const splitInsertMenuState = ref(null);
+const splitInsertSubmenuState = ref(null);
+const splitInsertNestedSubmenuState = ref(null);
+const splitInsertDialogState = ref(null);
+const splitImageInputRef = ref(null);
+const splitPendingImageInsertState = ref(null);
 const designFrameRef = ref(null);
 const designFrameLoadVersion = ref(0);
 const htmlPreviewFrameRef = ref(null);
@@ -1286,6 +1705,55 @@ const designExportStatusText = ref(DEFAULT_DESIGN_EXPORT_STATUS_TEXT);
 const designExportStatusDirty = ref(false);
 const designDraftPromptState = ref(null);
 const MAX_SMART_FORMAT_PROGRESS_STEPS = 6;
+const AI_INSERT_PROMPT_MAX_LENGTH = 1200;
+const AI_INSERT_CODE_RECOMMENDATIONS = Object.freeze([
+  {
+    label: "工具函数",
+    text: "生成一个可直接插入 Markdown 代码块的实用函数，包含必要的输入校验、关键注释和示例参数命名。",
+  },
+  {
+    label: "接口请求",
+    text: "生成一个清晰的接口请求示例，包含请求参数、错误处理和成功返回后的核心逻辑。",
+  },
+  {
+    label: "组件逻辑",
+    text: "生成一段结构清晰的组件逻辑代码，突出状态、事件处理和关键渲染流程。",
+  },
+]);
+const AI_INSERT_MERMAID_RECOMMENDATIONS = Object.freeze([
+  {
+    label: "流程图",
+    text: "生成 Mermaid flowchart 流程图，清晰表达开始、判断、分支、处理过程和结束。",
+  },
+  {
+    label: "时序图",
+    text: "生成 Mermaid sequenceDiagram 时序图，明确参与者、请求顺序和返回结果。",
+  },
+  {
+    label: "ER图",
+    text: "生成 Mermaid erDiagram，列出主要实体、关键字段和实体间关系。",
+  },
+]);
+
+function createAiInsertPromptState() {
+  return {
+    visible: false,
+    eyebrow: "AI GENERATE",
+    title: "这次希望 AI 生成什么？",
+    description: "",
+    inputLabel: "生成需求",
+    placeholder: "",
+    metaHint: "",
+    confirmText: "开始AI生成",
+    recommendationLabel: "常用推荐",
+    recommendations: [],
+    maxLength: AI_INSERT_PROMPT_MAX_LENGTH,
+    request: null,
+  };
+}
+
+const aiInsertPromptState = ref(createAiInsertPromptState());
+let aiInsertPromptResolver = null;
 const MARKDOWN_EXTENSIONS = new Set([
   ".md",
   ".markdown",
@@ -1441,6 +1909,538 @@ function preloadLiveEditor() {
     return;
   }
   preloadLiveEditorResources();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!(file instanceof Blob)) {
+      reject(new Error("无效的文件对象"));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error || new Error("读取图片失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function closeSplitInsertMenu() {
+  splitInsertMenuState.value = null;
+  splitInsertSubmenuState.value = null;
+  splitInsertNestedSubmenuState.value = null;
+}
+
+function closeSplitInsertNestedSubmenu() {
+  splitInsertNestedSubmenuState.value = null;
+}
+
+function closeSplitInsertDialog() {
+  splitInsertDialogState.value = null;
+}
+
+const splitInsertMenuSections = computed(() =>
+  buildMarkdownContextMenuSections({
+    headingContext: splitInsertMenuState.value?.headingContext
+      ? {
+          ...splitInsertMenuState.value.headingContext,
+          currentLevel: splitInsertMenuState.value.headingContext.level,
+        }
+      : null,
+  })
+);
+
+const splitInsertDialogTitle = computed(() =>
+  splitInsertDialogState.value?.item?.label
+    ? `插入${splitInsertDialogState.value.item.label}`
+    : ""
+);
+
+const splitInsertDialogDescription = computed(
+  () => splitInsertDialogState.value?.item?.description || ""
+);
+
+function isSplitInsertMenuEventInside(event) {
+  const panels = [
+    splitInsertMenuRef.value,
+    splitInsertSubmenuRef.value,
+    splitInsertNestedSubmenuRef.value,
+  ].filter(Boolean);
+  if (panels.length === 0) {
+    return false;
+  }
+
+  const target = event?.target;
+  if (target instanceof Node && panels.some((panel) => panel.contains(target))) {
+    return true;
+  }
+
+  if (typeof event?.composedPath === "function") {
+    const eventPath = event.composedPath();
+    return panels.some((panel) => eventPath.includes(panel));
+  }
+
+  return false;
+}
+
+function syncSplitInsertMenuPosition() {
+  const currentState = splitInsertMenuState.value;
+  const menuElement = splitInsertMenuRef.value;
+  if (!currentState || !menuElement) {
+    return;
+  }
+
+  const nextPosition = resolveFloatingMenuPosition({
+    anchorX: currentState.anchorX,
+    anchorY: currentState.anchorY,
+    menuWidth: menuElement.offsetWidth,
+    menuHeight: menuElement.offsetHeight,
+  });
+
+  if (nextPosition.x === currentState.x && nextPosition.y === currentState.y) {
+    return;
+  }
+
+  splitInsertMenuState.value = {
+    ...currentState,
+    ...nextPosition,
+  };
+}
+
+function syncSplitInsertSubmenuPosition() {
+  const currentState = splitInsertSubmenuState.value;
+  const menuElement = splitInsertSubmenuRef.value;
+  if (!currentState || !menuElement) {
+    return;
+  }
+
+  const nextPosition = resolveAdjacentMenuPosition(
+    currentState.anchorRect,
+    menuElement.offsetWidth,
+    menuElement.offsetHeight
+  );
+
+  if (nextPosition.x === currentState.x && nextPosition.y === currentState.y) {
+    return;
+  }
+
+  splitInsertSubmenuState.value = {
+    ...currentState,
+    ...nextPosition,
+  };
+}
+
+function syncSplitInsertNestedSubmenuPosition() {
+  const currentState = splitInsertNestedSubmenuState.value;
+  const menuElement = splitInsertNestedSubmenuRef.value;
+  if (!currentState || !menuElement) {
+    return;
+  }
+
+  const nextPosition = resolveAdjacentMenuPosition(
+    currentState.anchorRect,
+    menuElement.offsetWidth,
+    menuElement.offsetHeight
+  );
+
+  if (nextPosition.x === currentState.x && nextPosition.y === currentState.y) {
+    return;
+  }
+
+  splitInsertNestedSubmenuState.value = {
+    ...currentState,
+    ...nextPosition,
+  };
+}
+
+function handleSplitEditorContextMenu(event) {
+  if (!isMarkdownDocument.value || event.shiftKey) {
+    return;
+  }
+
+  const textarea = event.currentTarget;
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  event.preventDefault();
+  textarea.focus({ preventScroll: true });
+
+  const nextPosition = resolveFloatingMenuPosition({
+    anchorX: event.clientX,
+    anchorY: event.clientY,
+  });
+
+  splitInsertMenuState.value = {
+    anchorX: event.clientX,
+    anchorY: event.clientY,
+    x: nextPosition.x,
+    y: nextPosition.y,
+    target: textarea,
+    headingContext: getHashHeadingContext(
+      editedContent.value,
+      Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : 0
+    ),
+    selectionStart: Number.isFinite(textarea.selectionStart)
+      ? textarea.selectionStart
+      : String(editedContent.value || "").length,
+    selectionEnd: Number.isFinite(textarea.selectionEnd)
+      ? textarea.selectionEnd
+      : Number.isFinite(textarea.selectionStart)
+        ? textarea.selectionStart
+        : String(editedContent.value || "").length,
+  };
+
+  void nextTick(() => {
+    syncSplitInsertMenuPosition();
+  });
+}
+
+function openSplitInsertSubmenu(item, event) {
+  if (!item?.children?.length) {
+    splitInsertSubmenuState.value = null;
+    closeSplitInsertNestedSubmenu();
+    return;
+  }
+
+  const anchorElement = event?.currentTarget;
+  if (!(anchorElement instanceof Element)) {
+    return;
+  }
+
+  const anchorRect = anchorElement.getBoundingClientRect();
+  const nextPosition = resolveAdjacentMenuPosition(anchorRect, 280, 320);
+  splitInsertSubmenuState.value = {
+    parentId: item.id,
+    items: item.children,
+    anchorRect: {
+      left: anchorRect.left,
+      right: anchorRect.right,
+      top: anchorRect.top,
+      bottom: anchorRect.bottom,
+    },
+    x: nextPosition.x,
+    y: nextPosition.y,
+  };
+  closeSplitInsertNestedSubmenu();
+
+  void nextTick(() => {
+    syncSplitInsertSubmenuPosition();
+  });
+}
+
+function openSplitInsertNestedSubmenu(item, event) {
+  if (!item?.children?.length) {
+    closeSplitInsertNestedSubmenu();
+    return;
+  }
+
+  const anchorElement = event?.currentTarget;
+  if (!(anchorElement instanceof Element)) {
+    return;
+  }
+
+  const anchorRect = anchorElement.getBoundingClientRect();
+  const nextPosition = resolveAdjacentMenuPosition(anchorRect, 280, 320);
+  splitInsertNestedSubmenuState.value = {
+    parentId: item.id,
+    items: item.children,
+    anchorRect: {
+      left: anchorRect.left,
+      right: anchorRect.right,
+      top: anchorRect.top,
+      bottom: anchorRect.bottom,
+    },
+    x: nextPosition.x,
+    y: nextPosition.y,
+  };
+
+  void nextTick(() => {
+    syncSplitInsertNestedSubmenuPosition();
+  });
+}
+
+function insertSplitEditorSnippet(snippet, contextState = splitInsertMenuState.value) {
+  const textarea =
+    contextState?.target instanceof HTMLTextAreaElement
+      ? contextState.target
+      : editorRef.value instanceof HTMLTextAreaElement
+        ? editorRef.value
+        : null;
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return false;
+  }
+
+  const currentValue = String(editedContent.value ?? "");
+  const start = Number.isFinite(contextState?.selectionStart)
+    ? contextState.selectionStart
+    : Number.isFinite(textarea.selectionStart)
+      ? textarea.selectionStart
+      : currentValue.length;
+  const end = Number.isFinite(contextState?.selectionEnd)
+    ? contextState.selectionEnd
+    : Number.isFinite(textarea.selectionEnd)
+      ? textarea.selectionEnd
+      : start;
+  const nextValue = `${currentValue.slice(0, start)}${snippet}${currentValue.slice(end)}`;
+  const nextCaretPosition = start + snippet.length;
+
+  editedContent.value = nextValue;
+
+  void nextTick(() => {
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    handlePlainTextEditorInput({ target: textarea });
+  });
+
+  return true;
+}
+
+function buildSplitInsertContext(item) {
+  const currentState = splitInsertMenuState.value;
+  const textarea =
+    currentState?.target instanceof HTMLTextAreaElement
+      ? currentState.target
+      : editorRef.value instanceof HTMLTextAreaElement
+        ? editorRef.value
+        : null;
+  const currentLength = String(editedContent.value || "").length;
+
+  return {
+    item,
+    target: textarea,
+    selectionStart: Number.isFinite(currentState?.selectionStart)
+      ? currentState.selectionStart
+      : Number.isFinite(textarea?.selectionStart)
+        ? textarea.selectionStart
+        : currentLength,
+    selectionEnd: Number.isFinite(currentState?.selectionEnd)
+      ? currentState.selectionEnd
+      : Number.isFinite(textarea?.selectionEnd)
+        ? textarea.selectionEnd
+        : Number.isFinite(textarea?.selectionStart)
+          ? textarea.selectionStart
+          : currentLength,
+  };
+}
+
+function openSplitInsertDialog(item) {
+  splitInsertDialogState.value = {
+    ...buildSplitInsertContext(item),
+    draft: createInsertDraft(item, "split"),
+    error: "",
+  };
+  closeSplitInsertMenu();
+}
+
+function requestSplitImageInsertForItem(item) {
+  splitPendingImageInsertState.value = buildSplitInsertContext(item);
+  closeSplitInsertMenu();
+  void nextTick(() => {
+    splitImageInputRef.value?.click?.();
+  });
+}
+
+async function requestSplitAiGenerationForItem(item, insertContext = buildSplitInsertContext(item)) {
+  const generatedContent = await requestAiInsertContentWithPrompt(
+    createAiGenerationRequest(item, "split")
+  );
+  if (!String(generatedContent || "").trim()) {
+    return;
+  }
+
+  const snippet = createGeneratedInsertSnippet(item, generatedContent, "split");
+  const inserted = insertSplitEditorSnippet(snippet, insertContext);
+  if (inserted) {
+    closeSplitInsertMenu();
+  }
+}
+
+function handleSplitInsertMenuItem(item) {
+  if (item?.action === MENU_ITEM_ACTIONS.adjustHeadingLevel) {
+    const currentState = splitInsertMenuState.value;
+    const headingContext = currentState?.headingContext;
+    if (!headingContext) {
+      closeSplitInsertMenu();
+      return;
+    }
+
+    const explicitTargetLevel = Number(item?.targetLevel);
+    const nextLevel = normalizeHeadingLevel(
+      Number.isFinite(explicitTargetLevel)
+        ? explicitTargetLevel
+        : headingContext.level + (Number(item.levelDelta) || 0)
+    );
+    const nextContent = replaceHashHeadingLevel(editedContent.value, headingContext, nextLevel);
+    const replacementLine = nextContent.slice(headingContext.lineStart, headingContext.lineStart + (
+      `${"#".repeat(nextLevel)} ${headingContext.content || ""}`.length
+    ));
+    const inserted = insertSplitEditorSnippet(replacementLine, {
+      target: currentState?.target,
+      selectionStart: headingContext.lineStart,
+      selectionEnd: headingContext.lineEnd,
+    });
+    if (inserted) {
+      closeSplitInsertMenu();
+    } else {
+      editedContent.value = nextContent;
+      closeSplitInsertMenu();
+    }
+    return;
+  }
+
+  if (item?.action === MENU_ITEM_ACTIONS.aiGenerate) {
+    const insertContext = buildSplitInsertContext(item);
+    closeSplitInsertMenu();
+    void requestSplitAiGenerationForItem(item, insertContext);
+    return;
+  }
+
+  if (item?.type === INSERT_ITEM_TYPES.image) {
+    requestSplitImageInsertForItem(item);
+    return;
+  }
+
+  if (shouldOpenInsertDialog(item, "split")) {
+    openSplitInsertDialog(item);
+    return;
+  }
+
+  const inserted = insertSplitEditorSnippet(createDirectInsertSnippet(item, "split"));
+  if (inserted) {
+    closeSplitInsertMenu();
+  } else {
+    closeSplitInsertMenu();
+  }
+}
+
+function confirmSplitInsertDialog() {
+  const currentState = splitInsertDialogState.value;
+  if (!currentState?.item) {
+    return;
+  }
+
+  if (
+    currentState.item.type === INSERT_ITEM_TYPES.image &&
+    !String(currentState.draft?.source || "").trim()
+  ) {
+    currentState.error = "请先选择一张图片";
+    return;
+  }
+
+  const snippet = buildInsertSnippet(currentState.item, currentState.draft, "split");
+  const inserted = insertSplitEditorSnippet(snippet, currentState);
+  if (inserted) {
+    closeSplitInsertDialog();
+  }
+}
+
+function addSplitTaskItem() {
+  if (!splitInsertDialogState.value?.draft?.items) {
+    return;
+  }
+  splitInsertDialogState.value.draft.items.push({
+    text: "待办事项",
+    checked: false,
+  });
+}
+
+function removeSplitTaskItem(index) {
+  const items = splitInsertDialogState.value?.draft?.items;
+  if (!Array.isArray(items)) {
+    return;
+  }
+  items.splice(index, 1);
+  if (items.length === 0) {
+    items.push({
+      text: "",
+      checked: false,
+    });
+  }
+}
+
+function addSplitTableRow() {
+  const draft = splitInsertDialogState.value?.draft;
+  if (!draft || !Array.isArray(draft.headers) || !Array.isArray(draft.rows)) {
+    return;
+  }
+  draft.rows.push(Array.from({ length: draft.headers.length }, () => ""));
+}
+
+function removeSplitTableRow(rowIndex) {
+  const draft = splitInsertDialogState.value?.draft;
+  if (!draft || !Array.isArray(draft.rows)) {
+    return;
+  }
+  draft.rows.splice(rowIndex, 1);
+  if (draft.rows.length === 0) {
+    draft.rows.push(Array.from({ length: draft.headers.length || 1 }, () => ""));
+  }
+}
+
+function addSplitTableColumn() {
+  const draft = splitInsertDialogState.value?.draft;
+  if (!draft || !Array.isArray(draft.headers) || !Array.isArray(draft.rows)) {
+    return;
+  }
+  draft.headers.push(`列${draft.headers.length + 1}`);
+  draft.rows.forEach((row) => row.push(""));
+}
+
+function removeSplitTableColumn(columnIndex) {
+  const draft = splitInsertDialogState.value?.draft;
+  if (!draft || !Array.isArray(draft.headers) || draft.headers.length <= 1) {
+    return;
+  }
+  draft.headers.splice(columnIndex, 1);
+  draft.rows.forEach((row) => {
+    row.splice(columnIndex, 1);
+    if (row.length === 0) {
+      row.push("");
+    }
+  });
+}
+
+async function handleSplitImageFileChange(event) {
+  const file = event?.target?.files?.[0];
+  const pendingInsert = splitPendingImageInsertState.value;
+  if (!file || !pendingInsert?.item) {
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const storedImage = await saveImageToDocumentDirectory({
+      documentPath: filePath.value,
+      originalFileName: file.name || "",
+      dataUrl,
+    });
+    const snippet = buildInsertSnippet(
+      pendingInsert.item,
+      {
+        alt: file.name?.replace(/\.[^.]+$/, "") || "图片描述",
+        source: storedImage.source,
+        fileName: storedImage.fileName,
+      },
+      "split"
+    );
+    insertSplitEditorSnippet(snippet, pendingInsert);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "读取图片失败", "error");
+  } finally {
+    splitPendingImageInsertState.value = null;
+    if (event?.target) {
+      event.target.value = "";
+    }
+  }
+}
+
+function isSplitInsertDialogEventInside(event) {
+  const target = event?.target;
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  return target.closest(".md-insert-dialog") !== null;
 }
 
 function handleViewModeTabIntent(mode) {
@@ -1695,6 +2695,7 @@ let queuedMermaidRenderTimer = 0;
 let queuedMermaidRenderRafId = 0;
 let queuedMermaidRenderIdleId = 0;
 let queuedMermaidRenderPass = 0;
+let pendingFileOpenScrollResetTimer = 0;
 let lastRenderedMarkdownSource = "";
 let hasRenderedMarkdownSnapshot = false;
 
@@ -2225,6 +3226,29 @@ watch([() => tocItems.value.length, hasWorkspaceFiles], ([outlineCount, hasFiles
   }
 });
 
+watch(filePath, async (nextPath, previousPath) => {
+  if (!nextPath || nextPath === previousPath) {
+    return;
+  }
+
+  if (pendingFileOpenScrollResetTimer) {
+    clearTimeout(pendingFileOpenScrollResetTimer);
+    pendingFileOpenScrollResetTimer = 0;
+  }
+
+  await nextTick();
+  scrollDocumentToTop("auto");
+
+  requestAnimationFrame(() => {
+    scrollDocumentToTop("auto");
+  });
+
+  pendingFileOpenScrollResetTimer = window.setTimeout(() => {
+    pendingFileOpenScrollResetTimer = 0;
+    scrollDocumentToTop("auto");
+  }, 90);
+});
+
 // 判断是否有未保存的修改
 const hasChanges = computed(() => {
   return editedContent.value !== originalContent.value;
@@ -2520,6 +3544,7 @@ const {
   openSmartThemePrompt,
   confirmSmartThemePrompt,
   deleteSmartThemePromptHistoryItem,
+  generateInsertContent,
 } = useAiFlows({
   appSettings,
   loading: {
@@ -2560,6 +3585,92 @@ const {
     addToHistory,
   },
 });
+
+function buildAiInsertPromptPresentation(request = {}) {
+  const isMermaid = request.kind === "mermaid";
+  const targetLabel = isMermaid ? "Mermaid 图表" : request.language ? `${request.language} 代码` : "代码块";
+  return {
+    eyebrow: "AI GENERATE",
+    title: `生成${targetLabel}`,
+    description: isMermaid
+      ? "描述你想表达的流程、角色、关系或结构。AI 只生成可直接插入 Markdown 的 Mermaid 内容，不额外附带解释。"
+      : "描述你要的功能、输入输出、约束或调用方式。AI 只生成可直接插入 Markdown 代码块的内容，不额外附带解释。",
+    inputLabel: `${targetLabel}需求`,
+    placeholder: isMermaid
+      ? "例如：画一个用户提交申请、经理审批、财务付款的流程图；需要包含开始、驳回和完成节点。"
+      : "例如：生成一个带错误处理的 fetch 请求函数，接收 url 和 payload，返回统一结果对象。",
+    metaHint: "建议写清目标、结构、字段、步骤、输入输出或约束；生成结果会直接插入当前光标位置。",
+    confirmText: "开始AI生成",
+    recommendationLabel: "常用推荐",
+    recommendations: isMermaid
+      ? AI_INSERT_MERMAID_RECOMMENDATIONS
+      : AI_INSERT_CODE_RECOMMENDATIONS,
+    maxLength: AI_INSERT_PROMPT_MAX_LENGTH,
+  };
+}
+
+function closeAiInsertPrompt() {
+  const resolver = aiInsertPromptResolver;
+  aiInsertPromptResolver = null;
+  aiInsertPromptState.value = createAiInsertPromptState();
+  resolver?.("");
+}
+
+async function confirmAiInsertPrompt(instruction) {
+  const request = aiInsertPromptState.value.request;
+  const resolver = aiInsertPromptResolver;
+  aiInsertPromptResolver = null;
+  aiInsertPromptState.value = createAiInsertPromptState();
+
+  if (!request) {
+    resolver?.("");
+    return;
+  }
+
+  const normalizedPrompt = String(instruction || "").trim();
+  console.info("[AI插入] 已确认生成需求", {
+    kind: request.kind || "",
+    language: request.language || "",
+    promptLength: normalizedPrompt.length,
+  });
+
+  try {
+    const generatedContent = await generateInsertContent({
+      ...request,
+      prompt: instruction,
+    });
+    console.info("[AI插入] 生成流程结束", {
+      kind: request.kind || "",
+      language: request.language || "",
+      resultLength: String(generatedContent || "").length,
+    });
+    resolver?.(generatedContent || "");
+  } catch (error) {
+    console.error("[AI插入] 生成流程失败", error);
+    resolver?.("");
+  }
+}
+
+function requestAiInsertContentWithPrompt(request = {}) {
+  if (aiInsertPromptResolver) {
+    aiInsertPromptResolver("");
+  }
+
+  console.info("[AI插入] 打开生成需求弹窗", {
+    kind: request.kind || "",
+    language: request.language || "",
+  });
+
+  return new Promise((resolve) => {
+    aiInsertPromptResolver = resolve;
+    aiInsertPromptState.value = {
+      ...createAiInsertPromptState(),
+      ...buildAiInsertPromptPresentation(request),
+      visible: true,
+      request,
+    };
+  });
+}
 
 const themes = computed(() => [
   ...smartThemes.value.map((theme) => ({
@@ -2640,6 +3751,131 @@ watch(
   },
   { deep: true }
 );
+
+watch(
+  splitInsertMenuState,
+  (state, _previousState, onCleanup) => {
+    if (!state || typeof document === "undefined") {
+      return;
+    }
+
+    const handlePointerDown = (event) => {
+      if (isSplitInsertMenuEventInside(event)) {
+        return;
+      }
+      closeSplitInsertMenu();
+    };
+
+    const handleScroll = (event) => {
+      if (isSplitInsertMenuEventInside(event)) {
+        return;
+      }
+      closeSplitInsertMenu();
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        closeSplitInsertMenu();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", closeSplitInsertMenu);
+    window.addEventListener("blur", closeSplitInsertMenu);
+    window.addEventListener("keydown", handleKeydown, true);
+
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", closeSplitInsertMenu);
+      window.removeEventListener("blur", closeSplitInsertMenu);
+      window.removeEventListener("keydown", handleKeydown, true);
+    });
+  },
+  { flush: "post" }
+);
+
+watch(
+  splitInsertMenuState,
+  (state) => {
+    if (!state) {
+      return;
+    }
+    void nextTick(() => {
+      syncSplitInsertMenuPosition();
+    });
+  },
+  { flush: "post" }
+);
+
+watch(
+  splitInsertSubmenuState,
+  (state) => {
+    if (!state) {
+      return;
+    }
+    void nextTick(() => {
+      syncSplitInsertSubmenuPosition();
+    });
+  },
+  { flush: "post" }
+);
+
+watch(
+  splitInsertNestedSubmenuState,
+  (state) => {
+    if (!state) {
+      return;
+    }
+    void nextTick(() => {
+      syncSplitInsertNestedSubmenuPosition();
+    });
+  },
+  { flush: "post" }
+);
+
+watch(
+  splitInsertDialogState,
+  (state, _previousState, onCleanup) => {
+    if (!state || typeof document === "undefined") {
+      return;
+    }
+
+    const handlePointerDown = (event) => {
+      if (isSplitInsertDialogEventInside(event)) {
+        return;
+      }
+      closeSplitInsertDialog();
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        closeSplitInsertDialog();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeydown, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("resize", closeSplitInsertDialog);
+    window.addEventListener("blur", closeSplitInsertDialog);
+
+    onCleanup(() => {
+      window.removeEventListener("keydown", handleKeydown, true);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("resize", closeSplitInsertDialog);
+      window.removeEventListener("blur", closeSplitInsertDialog);
+    });
+  },
+  { flush: "post" }
+);
+
+watch([viewMode, isMarkdownDocument], ([mode, markdownMode]) => {
+  if (mode !== "split" || !markdownMode) {
+    closeSplitInsertMenu();
+    closeSplitInsertDialog();
+  }
+});
 
 function cycleTheme() {
   const currentIndex = themes.value.findIndex((t) => t.id === currentTheme.value);
@@ -3000,6 +4236,10 @@ onUnmounted(() => {
   if (queuedMarkdownRenderTimer) {
     clearTimeout(queuedMarkdownRenderTimer);
     queuedMarkdownRenderTimer = 0;
+  }
+  if (pendingFileOpenScrollResetTimer) {
+    clearTimeout(pendingFileOpenScrollResetTimer);
+    pendingFileOpenScrollResetTimer = 0;
   }
   cancelScheduledTocSync();
   cancelPreviewEnhancements();
