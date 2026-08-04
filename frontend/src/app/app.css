@@ -2006,7 +2006,7 @@ body.theme-radius-flat {
 
 .toc-sidebar {
   position: relative;
-  min-width: 120px;
+  min-width: 150px;
   max-width: 600px;
   height: 100%;
   background: var(--bg-toc);
@@ -2140,6 +2140,12 @@ body.theme-radius-flat .toc-list::-webkit-scrollbar-track {
   overflow-y: auto;
   overflow-x: hidden;
   contain: paint;
+}
+.search-panel-host {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .toc-list {
   flex: 1;
@@ -2480,6 +2486,21 @@ body.theme-radius-flat .toc-list::-webkit-scrollbar-track {
 .md-live-context-menu-item:hover {
   border-color: color-mix(in srgb, var(--accent-color) 26%, var(--border-color));
   background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-toolbar));
+}
+
+.md-live-context-menu-item.is-active {
+  border-color: color-mix(in srgb, var(--accent-color) 46%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-color) 15%, var(--bg-toolbar));
+  box-shadow: inset 3px 0 0 var(--accent-color);
+}
+
+.md-live-context-menu-item.is-active .md-live-context-menu-item-label {
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.md-live-context-menu-item.is-active .md-live-context-menu-item-desc {
+  color: var(--accent-color);
 }
 
 .md-live-context-menu-item:active {

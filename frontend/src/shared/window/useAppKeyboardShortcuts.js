@@ -7,6 +7,7 @@ export function useAppKeyboardShortcuts({
   isDragging,
   cancelDragState,
   openFile,
+  openSearch,
   hasChanges,
   saveFile,
   viewMode,
@@ -33,6 +34,12 @@ export function useAppKeyboardShortcuts({
     if (isDragging.value) {
       event.preventDefault();
       cancelDragState();
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      openSearch();
       return;
     }
 

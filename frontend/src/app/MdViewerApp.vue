@@ -590,10 +590,39 @@
             >
               <span class="name">大纲</span> <span>{{ tocItems.length }}</span>
             </button>
+            <button
+              class="sidebar-tab"
+              :class="{ active: sidebarSection === 'search' }"
+              type="button"
+              role="tab"
+              :aria-selected="sidebarSection === 'search'"
+              @click="sidebarSection = 'search'"
+            >
+              <span class="name">搜索</span>
+              <span v-if="searchMatchCount">{{ searchMatchCount }}</span>
+            </button>
           </div>
 
           <div
-            v-if="sidebarSection === 'files' && hasWorkspaceFiles"
+            v-if="sidebarSection === 'search'"
+            class="search-panel-host"
+          >
+            <SearchPanel
+              ref="searchPanelRef"
+              v-model:query="searchQuery"
+              :groups="searchResults"
+              :loading="searchLoading"
+              :total-matches="searchMatchCount"
+              :truncated="searchResultsTruncated"
+              :active-result-id="activeSearchResultId"
+              v-model:match-case="searchMatchCase"
+              v-model:match-whole-word="searchWholeWord"
+              @select="openSearchResult"
+            />
+          </div>
+
+          <div
+            v-else-if="sidebarSection === 'files' && hasWorkspaceFiles"
             class="file-tree-panel"
           >
             <FileTree
@@ -750,7 +779,7 @@
             type="button"
             title="回到顶部"
             aria-label="回到顶部"
-            @click="scrollDocumentToTop"
+            @click="scrollDocumentToTop()"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 19V5" />
@@ -1128,8 +1157,10 @@
               :class="[
                 'md-live-context-menu-item',
                 item.children?.length ? 'has-children' : '',
+                item.isActive ? 'is-active' : '',
               ]"
               role="menuitem"
+              :aria-current="item.isActive ? 'true' : undefined"
               @mousedown.prevent
               @mouseenter="openSplitInsertSubmenu(item, $event)"
               @click="
@@ -1165,8 +1196,10 @@
             :class="[
               'md-live-context-menu-item',
               item.children?.length ? 'has-children' : '',
+              item.isActive ? 'is-active' : '',
             ]"
             role="menuitem"
+            :aria-current="item.isActive ? 'true' : undefined"
             @mousedown.prevent
             @mouseenter="
               item.children?.length
@@ -1202,8 +1235,9 @@
             v-for="item in splitInsertNestedSubmenuState.items"
             :key="item.id"
             type="button"
-            class="md-live-context-menu-item"
+            :class="['md-live-context-menu-item', item.isActive ? 'is-active' : '']"
             role="menuitem"
+            :aria-current="item.isActive ? 'true' : undefined"
             @mousedown.prevent
             @click="handleSplitInsertMenuItem(item)"
           >
@@ -1552,6 +1586,8 @@ import {
 } from "@/shared/markdown/toc";
 import { DEFAULT_DESIGN_EXPORT_STATUS_TEXT } from "@/modules/design/constants";
 import FileTree from "@/modules/file-explorer/FileTree.vue";
+import SearchPanel from "@/modules/search/SearchPanel.vue";
+import { useWorkspaceSearch } from "@/modules/search/useWorkspaceSearch";
 import { normalizeWindowsPath } from "@/modules/file-explorer/useWorkspaceFileFlow";
 import appLogoUrl from "@/assets/app-logo.png";
 import { registerExternalFontFaces } from "@/shared/fontFaces";
@@ -1604,6 +1640,8 @@ const {
   startupContextReadyDefault,
   imageResolverBindings,
   settingsModalBindings,
+  readTextFileContent,
+  setWindowTitle,
   applyDesignFrameUiThemeOnly,
   applyDesignExportHtml,
   releaseDesignFrameBridgeResources,
@@ -1632,6 +1670,11 @@ const workspaceRoots = ref([]);
 const workspaceFileCount = ref(0);
 const expandedTreePaths = ref(new Set());
 const sidebarSection = ref("outline");
+const searchPanelRef = ref(null);
+const activeSearchResultId = ref("");
+const activeSearchResult = ref(null);
+const searchMatchCase = ref(false);
+const searchWholeWord = ref(false);
 const isDark = ref(false);
 const showToc = ref(readPreference("showToc"));
 const tocItems = ref([]);
@@ -1841,9 +1884,22 @@ const DESIGN_HELP_TOPICS = [
 const isDesignExportWindow = computed(
   () => startupMode.value === STARTUP_MODE_DESIGN_EXPORT
 );
+const windowTitle = computed(() => {
+  if (isDesignExportWindow.value) {
+    return "HTML设计器";
+  }
+
+  const currentFileName = String(fileName.value || "").trim();
+  return currentFileName && currentFileName !== "未打开文件"
+    ? currentFileName
+    : "MD 查看器";
+});
+watch(windowTitle, (title) => {
+  setWindowTitle(title);
+}, { immediate: true });
 const tocWidth = ref(readPreference("tocWidth"));
 const isResizingToc = ref(false);
-const tocMinWidth = 120;
+const tocMinWidth = 150;
 const tocMaxWidth = 500;
 const splitMinPercent = 20;
 const splitMaxPercent = 80;
@@ -1863,8 +1919,25 @@ const normalizedActiveWorkspacePath = computed(() =>
   normalizeWindowsPath(filePath.value)
 );
 const shouldShowSidebar = computed(
-  () => showToc.value && (hasWorkspaceFiles.value || tocItems.value.length > 0)
+  () =>
+    showToc.value &&
+    (hasWorkspaceFiles.value || tocItems.value.length > 0 || sidebarSection.value === "search")
 );
+const {
+  query: searchQuery,
+  groups: searchResults,
+  isSearching: searchLoading,
+  isTruncated: searchResultsTruncated,
+  totalMatches: searchMatchCount,
+} = useWorkspaceSearch({
+  workspaceRoots,
+  filePath,
+  fileName,
+  editedContent,
+  readTextFileContent,
+  matchCase: searchMatchCase,
+  wholeWord: searchWholeWord,
+});
 const {
   looksLikeHtmlDocument,
   getHtmlPreviewBaseHref,
@@ -3437,6 +3510,80 @@ function toggleTreePath(path) {
   expandedTreePaths.value = nextPaths;
 }
 
+function openSearch() {
+  showToc.value = true;
+  sidebarSection.value = "search";
+  void nextTick(() => searchPanelRef.value?.focusInput?.());
+}
+
+function getTextOffsetByLineAndColumn(content, line, column) {
+  const source = String(content || "");
+  let offset = 0;
+  const targetLine = Math.max(1, Number(line) || 1);
+
+  for (let currentLine = 1; currentLine < targetLine; currentLine += 1) {
+    const newlineIndex = source.indexOf("\n", offset);
+    if (newlineIndex === -1) {
+      return source.length;
+    }
+    offset = newlineIndex + 1;
+  }
+
+  return Math.min(source.length, offset + Math.max(0, (Number(column) || 1) - 1));
+}
+
+async function locateSearchResult(result) {
+  await nextTick();
+
+  const editor = editorRef.value;
+  if (!editor) {
+    return;
+  }
+
+  const start = getTextOffsetByLineAndColumn(
+    editedContent.value,
+    result.line,
+    result.column
+  );
+  const end = Math.min(start + result.matchLength, editedContent.value.length);
+  editor.focus({ preventScroll: true });
+  editor.setSelectionRange(start, end);
+
+  const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 22;
+  editor.scrollTop = Math.max(
+    0,
+    (Math.max(0, result.line - 1) * lineHeight) - editor.clientHeight * 0.35
+  );
+}
+
+async function openSearchResult(result) {
+  if (!result?.filePath) {
+    return;
+  }
+
+  const targetPath = result.filePath;
+  if (normalizeWindowsPath(targetPath) !== normalizeWindowsPath(filePath.value)) {
+    await openWorkspaceFile(targetPath);
+    if (normalizeWindowsPath(targetPath) !== normalizeWindowsPath(filePath.value)) {
+      return;
+    }
+  }
+
+  activeSearchResultId.value = result.id;
+  activeSearchResult.value = result;
+  showToc.value = true;
+  sidebarSection.value = "search";
+  if (viewMode.value === "split") {
+    await locateSearchResult(result);
+  }
+}
+
+watch(viewMode, (mode) => {
+  if (mode === "split" && activeSearchResult.value) {
+    void locateSearchResult(activeSearchResult.value);
+  }
+});
+
 // 主题切换
 const builtInThemes = [
   {
@@ -4096,6 +4243,7 @@ const {
       isDragging,
       cancelDragState,
       openFile,
+      openSearch,
       hasChanges,
       saveFile,
       viewMode,

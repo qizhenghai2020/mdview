@@ -35,6 +35,7 @@ import {
   WindowSetBackgroundColour,
   WindowSetDarkTheme,
   WindowSetLightTheme,
+  WindowSetTitle,
   WindowToggleMaximise,
 } from "../../../wailsjs/runtime/runtime";
 
@@ -88,6 +89,7 @@ function createRuntimeBridge(runtime = {}) {
     WindowIsMaximised: pickFunction(runtime.WindowIsMaximised, createResolvedValue(false)),
     WindowSetDarkTheme: pickFunction(runtime.WindowSetDarkTheme, noop),
     WindowSetLightTheme: pickFunction(runtime.WindowSetLightTheme, noop),
+    WindowSetTitle: pickFunction(runtime.WindowSetTitle, noop),
     WindowSetBackgroundColour: pickFunction(runtime.WindowSetBackgroundColour, noop),
     Quit: pickFunction(runtime.Quit, noop),
   };
@@ -144,6 +146,7 @@ export function createWailsBridge() {
     WindowIsMaximised,
     WindowSetDarkTheme,
     WindowSetLightTheme,
+    WindowSetTitle,
     WindowSetBackgroundColour,
     Quit,
   });

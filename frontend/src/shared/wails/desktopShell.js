@@ -59,6 +59,7 @@ export function createDesktopShell() {
     windowToggleMaximise: runtime.WindowToggleMaximise,
     windowSetDarkTheme: runtime.WindowSetDarkTheme,
     windowSetLightTheme: runtime.WindowSetLightTheme,
+    windowSetTitle: runtime.WindowSetTitle,
     windowSetBackgroundColour: runtime.WindowSetBackgroundColour,
     quit: runtime.Quit,
   });

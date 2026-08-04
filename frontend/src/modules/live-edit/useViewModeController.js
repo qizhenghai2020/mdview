@@ -127,8 +127,9 @@ export function useViewModeController({
       return;
     }
 
+    const safeBehavior = behavior === "auto" ? "auto" : "smooth";
     if (typeof element.scrollTo === "function") {
-      element.scrollTo({ top: 0, behavior });
+      element.scrollTo({ top: 0, behavior: safeBehavior });
       return;
     }
 

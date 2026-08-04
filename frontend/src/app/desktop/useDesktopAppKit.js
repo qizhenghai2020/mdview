@@ -24,6 +24,12 @@ function createViewBindings(desktop) {
     startupContextReadyDefault: !desktop.isWailsEnv,
     imageResolverBindings,
     settingsModalBindings,
+    readTextFileContent(path) {
+      return desktop.resourceShell?.readTextFileContent?.(path) || Promise.resolve("");
+    },
+    setWindowTitle(title) {
+      desktop.windowShell?.setTitle?.(title);
+    },
   };
 }
 

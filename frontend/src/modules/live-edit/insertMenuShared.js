@@ -246,6 +246,7 @@ function createHeadingAdjustChildren(headingContext) {
       description,
       action: MENU_ITEM_ACTIONS.adjustHeadingLevel,
       targetLevel: level,
+      isActive: level === currentLevel,
     };
   });
 }

@@ -30,6 +30,7 @@ export function createWindowShellClient({
   windowToggleMaximise,
   windowSetDarkTheme,
   windowSetLightTheme,
+  windowSetTitle,
   windowSetBackgroundColour,
   quit,
 } = {}) {
@@ -39,6 +40,7 @@ export function createWindowShellClient({
   const requestWindowToggleMaximise = pickFunction(windowToggleMaximise, noop);
   const requestWindowSetDarkTheme = pickFunction(windowSetDarkTheme, noop);
   const requestWindowSetLightTheme = pickFunction(windowSetLightTheme, noop);
+  const requestWindowSetTitle = pickFunction(windowSetTitle, noop);
   const requestWindowSetBackgroundColour = pickFunction(windowSetBackgroundColour, noop);
   const requestQuit = pickFunction(quit, noop);
 
@@ -52,6 +54,9 @@ export function createWindowShellClient({
     },
     toggleMaximize() {
       requestWindowToggleMaximise();
+    },
+    setTitle(title) {
+      requestWindowSetTitle(String(title || ""));
     },
     close() {
       requestQuit();

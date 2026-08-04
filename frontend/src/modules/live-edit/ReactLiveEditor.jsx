@@ -1714,8 +1714,9 @@ function RightClickInsertMenu({ filePath = "", requestAiInsertContent = null }) 
                   type="button"
                   className={`md-live-context-menu-item${
                     item.children?.length ? " has-children" : ""
-                  }`}
+                  }${item.isActive ? " is-active" : ""}`}
                   role="menuitem"
+                  aria-current={item.isActive ? "true" : undefined}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={(event) => openSubmenuForItem(item, event)}
                   onClick={(event) =>
@@ -1751,8 +1752,11 @@ function RightClickInsertMenu({ filePath = "", requestAiInsertContent = null }) 
                 <button
                   key={item.id}
                   type="button"
-                  className={`md-live-context-menu-item${item.children?.length ? " has-children" : ""}`}
+                  className={`md-live-context-menu-item${item.children?.length ? " has-children" : ""}${
+                    item.isActive ? " is-active" : ""
+                  }`}
                   role="menuitem"
+                  aria-current={item.isActive ? "true" : undefined}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={(event) =>
                     item.children?.length
@@ -1791,8 +1795,9 @@ function RightClickInsertMenu({ filePath = "", requestAiInsertContent = null }) 
                 <button
                   key={item.id}
                   type="button"
-                  className="md-live-context-menu-item"
+                  className={`md-live-context-menu-item${item.isActive ? " is-active" : ""}`}
                   role="menuitem"
+                  aria-current={item.isActive ? "true" : undefined}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => handleMenuItemAction(item)}
                 >
