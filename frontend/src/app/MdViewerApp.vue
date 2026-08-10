@@ -363,6 +363,27 @@
           </div>
 
           <button
+            class="toolbar-btn ppt-toolbar-btn"
+            type="button"
+            :disabled="!hasDocumentContent"
+            title="生成或打开 PPT"
+            @click="pptSession.openPpt"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M8 9h8M8 13h5M8 17h3" />
+            </svg>
+            <span>PPT</span>
+          </button>
+
+          <button
             class="toolbar-btn design-btn"
             type="button"
             :disabled="isExporting || !hasDocumentContent"
@@ -696,7 +717,7 @@
                     ref="htmlPreviewFrameRef"
                     class="html-preview-frame"
                     :srcdoc="htmlPreviewDocument"
-                    @load="handleHtmlPreviewLoad"
+                    @load="handleHtmlPreviewLoadAndSearch"
                   ></iframe>
                   <pre
                     v-else
@@ -756,7 +777,7 @@
                   ref="htmlPreviewFrameRef"
                   class="html-preview-frame"
                   :srcdoc="htmlPreviewDocument"
-                  @load="handleHtmlPreviewLoad"
+                  @load="handleHtmlPreviewLoadAndSearch"
                 ></iframe>
                 <pre
                   v-else
@@ -1520,6 +1541,65 @@
         @close="showSmartFormatFailure = false"
         @open-settings="openSettingsFromSmartFormatFailure"
       />
+
+      <PptStudioModal
+        :visible="pptSession.visible"
+        :view="pptSession.view"
+        :status="pptSession.status"
+        :artifact="pptSession.artifact"
+        :editor-html="pptSession.editorHtml"
+        :editor-url="pptSession.editorUrl"
+        :editor-dirty="pptSession.editorDirty"
+        :is-generating="pptSession.isGenerating"
+        :is-saving="pptSession.isSaving"
+        :error="pptSession.error"
+        :generation-job="pptSession.generationJob"
+        :generation-progress="pptSession.generationProgress"
+        :generation-steps="pptSession.generationSteps"
+        :generation-percent="pptSession.generationPercent"
+        :elapsed-ms="pptSession.elapsedMs"
+        :selected-volume="pptSession.selectedVolume"
+        :generation-density="pptSession.generationDensity"
+        :generation-target-slides="pptSession.generationTargetSlides"
+        :reference-images="pptSession.referenceImages"
+        :reference-mode="pptSession.referenceMode"
+        :reference-usage="pptSession.referenceUsage"
+        :reference-strength="pptSession.referenceStrength"
+        :reference-loading="pptSession.referenceLoading"
+        :slide-regeneration-visible="pptSession.slideRegenerationVisible"
+        :slide-regeneration-loading="pptSession.slideRegenerationLoading"
+        :slide-regeneration-error="pptSession.slideRegenerationError"
+        :slide-regeneration-request-key="pptSession.slideRegenerationRequestKey"
+        :slide-reference-images="pptSession.slideReferenceImages"
+        :slide-reference-loading="pptSession.slideReferenceLoading"
+        @close="pptSession.closePpt"
+        @generate="pptSession.generatePpt"
+        @regenerate="pptSession.regeneratePpt"
+        @continue-generation="pptSession.continueGeneration"
+        @cancel-generation="pptSession.cancelGeneration"
+        @copy-raw-result="pptSession.copyRawResult"
+        @open-artifact="pptSession.openArtifact"
+        @open-partial="pptSession.openPartialGeneration"
+        @select-volume="pptSession.selectVolume"
+        @update:generation-density="pptSession.generationDensity = $event"
+        @update:generation-target-slides="pptSession.generationTargetSlides = $event"
+        @update:reference-mode="pptSession.referenceMode = $event"
+        @update:reference-usage="pptSession.referenceUsage = $event"
+        @update:reference-strength="pptSession.referenceStrength = $event"
+        @choose-reference-files="pptSession.chooseReferenceFiles"
+        @choose-reference-folder="pptSession.chooseReferenceFolder"
+        @add-reference-image-url="pptSession.addReferenceImageURL"
+        @remove-reference-image="pptSession.removeReferenceImage"
+        @clear-reference-images="pptSession.clearReferenceImages"
+        @close-slide-regeneration="pptSession.closeSlideRegeneration"
+        @regenerate-slide="pptSession.regenerateCurrentSlide"
+        @choose-slide-reference-files="pptSession.chooseSlideReferenceFiles"
+        @add-slide-reference-image-url="pptSession.addSlideReferenceImageURL"
+        @remove-slide-reference-image="pptSession.removeSlideReferenceImage"
+        @clear-slide-reference-images="pptSession.clearSlideReferenceImages"
+        @save="pptSession.saveEditor"
+        @frame-load="pptSession.handleFrameLoad"
+      />
     </template>
   </div>
 </template>
@@ -1527,6 +1607,7 @@
 <script setup>
 import {
   ref,
+  proxyRefs,
   computed,
   watch,
   onMounted,
@@ -1568,6 +1649,9 @@ import { useStyleConfigPlugin } from "@/modules/style-config/useStyleConfigPlugi
 import { DEFAULT_APP_SETTINGS } from "@/modules/settings/constants";
 import { useAppSettings } from "@/modules/settings/useAppSettings";
 import { useDesktopAppKit } from "@/app/desktop";
+import PptStudioModal from "@/modules/ppt/PptStudioModal.vue";
+import { usePptSession } from "@/modules/ppt/usePptSession";
+import bentoShellHtml from "@/modules/ppt/bento-shell.html?raw";
 import {
   escapeCodeHtml,
   createCodeBlockRenderer,
@@ -1641,11 +1725,15 @@ const {
   imageResolverBindings,
   settingsModalBindings,
   readTextFileContent,
+  fileShell,
   setWindowTitle,
+  windowShell,
   applyDesignFrameUiThemeOnly,
   applyDesignExportHtml,
   releaseDesignFrameBridgeResources,
   readDesignFrameCurrentHtml,
+  aiClient,
+  pptArtifactShell,
   useAiFlows,
   useDesignFlows,
   useFileFlows,
@@ -3532,28 +3620,251 @@ function getTextOffsetByLineAndColumn(content, line, column) {
   return Math.min(source.length, offset + Math.max(0, (Number(column) || 1) - 1));
 }
 
-async function locateSearchResult(result) {
-  await nextTick();
+function getSearchMatchText(result) {
+  if (typeof result?.matchText === "string" && result.matchText) {
+    return result.matchText;
+  }
 
-  const editor = editorRef.value;
-  if (!editor) {
+  const lines = String(editedContent.value || "").split(/\r\n|\n|\r/);
+  const lineText = lines[Math.max(0, (Number(result?.line) || 1) - 1)] || "";
+  const start = Math.max(0, (Number(result?.column) || 1) - 1);
+  return lineText.slice(start, start + Math.max(0, Number(result?.matchLength) || 0));
+}
+
+function getSearchTextNodes(root) {
+  if (!root || typeof root.ownerDocument?.createTreeWalker !== "function") {
+    return [];
+  }
+
+  const nodes = [];
+  const walker = root.ownerDocument.createTreeWalker(root, 4);
+  let node = walker.nextNode();
+  while (node) {
+    if (node.nodeValue && !node.parentElement?.closest("script, style, noscript, template")) {
+      nodes.push(node);
+    }
+    node = walker.nextNode();
+  }
+  return nodes;
+}
+
+function findSearchRange(root, searchText, { matchCase = false, occurrence = 0 } = {}) {
+  if (!root || !searchText) {
+    return null;
+  }
+
+  const textNodes = getSearchTextNodes(root);
+  if (!textNodes.length) {
+    return null;
+  }
+
+  const entries = [];
+  let fullText = "";
+  for (const node of textNodes) {
+    const start = fullText.length;
+    fullText += node.nodeValue;
+    entries.push({ node, start, end: fullText.length });
+  }
+
+  const normalizedText = matchCase ? fullText : fullText.toLowerCase();
+  const normalizedSearchText = matchCase ? searchText : searchText.toLowerCase();
+  const targetOccurrence = Math.max(0, Number(occurrence) || 0);
+  let searchOffset = 0;
+  let currentOccurrence = 0;
+
+  while (searchOffset <= normalizedText.length) {
+    const matchIndex = normalizedText.indexOf(normalizedSearchText, searchOffset);
+    if (matchIndex === -1) {
+      return null;
+    }
+
+    if (currentOccurrence === targetOccurrence) {
+      const matchEnd = matchIndex + searchText.length;
+      const startEntry = entries.find(
+        (entry) => matchIndex >= entry.start && matchIndex < entry.end
+      );
+      const endEntry = entries.find(
+        (entry) => matchEnd > entry.start && matchEnd <= entry.end
+      );
+      if (!startEntry || !endEntry) {
+        return null;
+      }
+
+      const range = root.ownerDocument.createRange();
+      range.setStart(startEntry.node, matchIndex - startEntry.start);
+      range.setEnd(endEntry.node, matchEnd - endEntry.start);
+      return range;
+    }
+
+    currentOccurrence += 1;
+    searchOffset = matchIndex + Math.max(searchText.length, 1);
+  }
+
+  return null;
+}
+
+function selectSearchRange(range) {
+  const selection = range?.startContainer?.ownerDocument?.getSelection?.();
+  if (!selection || !range) {
     return;
   }
 
-  const start = getTextOffsetByLineAndColumn(
-    editedContent.value,
-    result.line,
-    result.column
-  );
-  const end = Math.min(start + result.matchLength, editedContent.value.length);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function scrollSearchRangeIntoView(range, scrollContainer) {
+  if (!range || !scrollContainer) {
+    return;
+  }
+
+  const rangeRect = range.getBoundingClientRect();
+  const containerRect = scrollContainer.getBoundingClientRect?.();
+  if (!containerRect || !rangeRect.height && !rangeRect.width) {
+    range.commonAncestorContainer.parentElement?.scrollIntoView?.({
+      block: "center",
+      inline: "nearest",
+      behavior: "auto",
+    });
+    return;
+  }
+
+  const isOutside =
+    rangeRect.top < containerRect.top || rangeRect.bottom > containerRect.bottom;
+  if (isOutside) {
+    scrollContainer.scrollTop = Math.max(
+      0,
+      scrollContainer.scrollTop +
+        rangeRect.top -
+        containerRect.top -
+        scrollContainer.clientHeight * 0.35
+    );
+  }
+}
+
+function scrollSearchContainerToLine(container, line, content) {
+  if (!container) {
+    return;
+  }
+
+  const lineCount = Math.max(1, String(content || "").split(/\r\n|\n|\r/).length);
+  const lineRatio = Math.min(1, Math.max(0, (Math.max(1, Number(line) || 1) - 1) / lineCount));
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  container.scrollTop = lineRatio * maxScrollTop;
+}
+
+function locateSearchResultInTextEditor(editor, result) {
+  if (!editor || typeof editor.setSelectionRange !== "function") {
+    return false;
+  }
+
+  const content = String(editedContent.value || "");
+  const start = getTextOffsetByLineAndColumn(content, result.line, result.column);
+  const end = Math.min(start + Math.max(0, Number(result.matchLength) || 0), content.length);
   editor.focus({ preventScroll: true });
   editor.setSelectionRange(start, end);
 
   const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 22;
-  editor.scrollTop = Math.max(
-    0,
-    (Math.max(0, result.line - 1) * lineHeight) - editor.clientHeight * 0.35
-  );
+  if (editor.clientHeight && editor.scrollHeight > editor.clientHeight) {
+    editor.scrollTop = Math.max(
+      0,
+      (Math.max(0, result.line - 1) * lineHeight) - editor.clientHeight * 0.35
+    );
+  }
+  return true;
+}
+
+function locateSearchResultInDom(root, scrollContainer, result, focusElement = null) {
+  const matchText = getSearchMatchText(result);
+  const range = findSearchRange(root, matchText, {
+    matchCase: searchMatchCase.value,
+    occurrence: result.matchOrdinal,
+  });
+  if (!range) {
+    return false;
+  }
+
+  focusElement?.focus?.({ preventScroll: true });
+  selectSearchRange(range);
+  scrollSearchRangeIntoView(range, scrollContainer);
+  return true;
+}
+
+function getHtmlPreviewScrollElement(frame) {
+  const doc = frame?.contentDocument;
+  return doc?.scrollingElement || doc?.documentElement || doc?.body || null;
+}
+
+function locateSearchResultInCurrentView(result) {
+  if (viewMode.value === "split") {
+    return locateSearchResultInTextEditor(editorRef.value, result);
+  }
+
+  if (viewMode.value === "live") {
+    const liveRoot = liveEditorRef.value;
+    const textEditor = liveRoot?.querySelector?.(".html-source-editor, .plain-text-editor");
+    if (textEditor) {
+      return locateSearchResultInTextEditor(textEditor, result);
+    }
+
+    const editableRoot = liveRoot?.querySelector?.('[contenteditable="true"], .DOMD-Root');
+    if (locateSearchResultInDom(editableRoot, liveRoot, result, editableRoot)) {
+      return true;
+    }
+
+    scrollSearchContainerToLine(liveRoot, result.line, editedContent.value);
+    return false;
+  }
+
+  const previewRoot = previewRef.value;
+  if (isHtmlDocument.value) {
+    const frame = htmlPreviewFrameRef.value;
+    const scrollElement = getHtmlPreviewScrollElement(frame);
+    const htmlRoot = frame?.contentDocument?.body || frame?.contentDocument?.documentElement;
+    if (locateSearchResultInDom(htmlRoot, scrollElement, result)) {
+      return true;
+    }
+
+    scrollSearchContainerToLine(scrollElement, result.line, editedContent.value);
+    return false;
+  }
+
+  if (locateSearchResultInDom(previewRoot, previewRoot, result)) {
+    return true;
+  }
+
+  scrollSearchContainerToLine(previewRoot, result.line, editedContent.value);
+  return false;
+}
+
+function waitForSearchRenderFrame() {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    return new Promise((resolve) => window.requestAnimationFrame(resolve));
+  }
+  return Promise.resolve();
+}
+
+async function locateSearchResult(result) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await nextTick();
+    if (locateSearchResultInCurrentView(result)) {
+      return;
+    }
+    await waitForSearchRenderFrame();
+  }
+
+  locateSearchResultInCurrentView(result);
+}
+
+function handleHtmlPreviewLoadAndSearch() {
+  handleHtmlPreviewLoad();
+  const activeResult = activeSearchResult.value;
+  if (
+    activeResult &&
+    normalizeWindowsPath(activeResult.filePath) === normalizeWindowsPath(filePath.value)
+  ) {
+    void locateSearchResult(activeResult);
+  }
 }
 
 async function openSearchResult(result) {
@@ -3573,13 +3884,14 @@ async function openSearchResult(result) {
   activeSearchResult.value = result;
   showToc.value = true;
   sidebarSection.value = "search";
-  if (viewMode.value === "split") {
-    await locateSearchResult(result);
-  }
+  await locateSearchResult(result);
 }
 
-watch(viewMode, (mode) => {
-  if (mode === "split" && activeSearchResult.value) {
+watch(viewMode, () => {
+  if (
+    activeSearchResult.value &&
+    normalizeWindowsPath(activeSearchResult.value.filePath) === normalizeWindowsPath(filePath.value)
+  ) {
     void locateSearchResult(activeSearchResult.value);
   }
 });
@@ -3732,6 +4044,22 @@ const {
     addToHistory,
   },
 });
+
+const pptSession = proxyRefs(usePptSession({
+  pptArtifactShell,
+  fileShell,
+  readImageAsBase64: imageResolverBindings.readImageAsBase64,
+  windowShell,
+  aiClient,
+  activeModel: () => activeSmartFormatModel.value,
+  shellHtml: bentoShellHtml,
+  editedContent,
+  markdownContent,
+  filePath,
+  fileName,
+  hasDocumentContent,
+  showToast,
+}));
 
 function buildAiInsertPromptPresentation(request = {}) {
   const isMermaid = request.kind === "mermaid";
@@ -4261,7 +4589,10 @@ const {
     startFilePolling,
     handleFileChanged,
     handleNativeFileDrop,
-    handleAIFormatProgress,
+    handleAIFormatProgress: (payload) => {
+      handleAIFormatProgress(payload);
+      pptSession.handleProgress(payload);
+    },
   },
 });
 // 显示欢迎内容

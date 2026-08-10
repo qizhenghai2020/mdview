@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -13,6 +14,13 @@ type aiProgressReporter struct {
 	requestBytes           int
 	lastStreamContentChars int
 	lastStreamProgressAt   int64
+	jobID                  string
+	batchID                string
+	volumeIndex            int
+	currentSlide           int
+	completedSlides        int
+	totalSlides            int
+	attempt                int
 }
 
 func newAIProgressReporter(app *App, kind string) *aiProgressReporter {
@@ -23,7 +31,20 @@ func newAIProgressReporter(app *App, kind string) *aiProgressReporter {
 	}
 }
 
+func newPptProgressReporter(app *App, jobID, batchID string, volumeIndex, currentSlide, completedSlides, totalSlides, attempt int) *aiProgressReporter {
+	reporter := newAIProgressReporter(app, "presentation")
+	reporter.jobID = jobID
+	reporter.batchID = batchID
+	reporter.volumeIndex = volumeIndex
+	reporter.currentSlide = currentSlide
+	reporter.completedSlides = completedSlides
+	reporter.totalSlides = totalSlides
+	reporter.attempt = attempt
+	return reporter
+}
+
 type aiContentLifecycleOptions struct {
+	requestContext             context.Context
 	streamMessage              string
 	requestFailureMessage      string
 	requestErrorPrefix         string
@@ -70,6 +91,13 @@ func (r *aiProgressReporter) emit(event AIFormatProgressEvent) {
 		return
 	}
 	event.Kind = r.kind
+	event.JobID = r.jobID
+	event.BatchID = r.batchID
+	event.VolumeIndex = r.volumeIndex
+	event.CurrentSlide = r.currentSlide
+	event.CompletedSlides = r.completedSlides
+	event.TotalSlides = r.totalSlides
+	event.Attempt = r.attempt
 	r.app.emitAIFormatProgress(event)
 }
 
@@ -219,7 +247,8 @@ func (a *App) executeAIContentLifecycle(
 		onProgress = progress.buildStreamHandler(options.streamMessage)
 	}
 
-	execution, err := a.executeAIRequestWithProgress(
+	execution, err := a.executeAIRequestWithContext(
+		options.requestContext,
 		model,
 		endpoint,
 		body,

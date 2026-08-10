@@ -100,6 +100,11 @@ func prepareAIRequest(model AIModelConfig, requestContext aiRequestContext) (str
 		return "", nil, fmt.Errorf("模型接口地址为空")
 	}
 
+	requestContext, err := attachReferenceImages(requestContext)
+	if err != nil {
+		return "", nil, err
+	}
+
 	payload := chatCompletionRequest{
 		Model:       requestContext.ModelName,
 		Messages:    requestContext.Messages,
@@ -197,8 +202,12 @@ func buildAIRequestTemplateVariables(requestContext aiRequestContext) map[string
 	for _, message := range requestContext.Messages {
 		messages = append(messages, map[string]any{
 			"role":    message.Role,
-			"content": message.Content,
+			"content": chatMessageContent(message),
 		})
+	}
+	imageURLs := make([]string, 0)
+	for _, message := range requestContext.Messages {
+		imageURLs = append(imageURLs, message.ImageDataURLs...)
 	}
 
 	format := "markdown"
@@ -207,19 +216,40 @@ func buildAIRequestTemplateVariables(requestContext aiRequestContext) map[string
 	}
 
 	return map[string]any{
-		"requestKind":  requestContext.Kind,
-		"format":       format,
-		"model":        requestContext.ModelName,
-		"temperature":  requestContext.Temperature,
-		"messages":     messages,
-		"systemPrompt": requestContext.SystemPrompt,
-		"userPrompt":   requestContext.UserPrompt,
-		"markdown":     requestContext.Markdown,
-		"html":         requestContext.Markdown,
-		"instruction":  requestContext.Instruction,
-		"preference":   requestContext.Preference,
-		"currentTheme": requestContext.CurrentTheme,
+		"requestKind":     requestContext.Kind,
+		"format":          format,
+		"model":           requestContext.ModelName,
+		"temperature":     requestContext.Temperature,
+		"messages":        messages,
+		"systemPrompt":    requestContext.SystemPrompt,
+		"userPrompt":      requestContext.UserPrompt,
+		"markdown":        requestContext.Markdown,
+		"html":            requestContext.Markdown,
+		"instruction":     requestContext.Instruction,
+		"preference":      requestContext.Preference,
+		"currentTheme":    requestContext.CurrentTheme,
+		"referenceImages": imageURLs,
 	}
+}
+
+func chatMessageContent(message chatCompletionMessage) any {
+	if len(message.ImageDataURLs) == 0 {
+		return message.Content
+	}
+	parts := make([]map[string]any, 0, len(message.ImageDataURLs)+1)
+	for _, imageURL := range message.ImageDataURLs {
+		if imageURL == "" {
+			continue
+		}
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": imageURL},
+		})
+	}
+	if message.Content != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": message.Content})
+	}
+	return parts
 }
 
 func applyTemplateVariables(value any, variables map[string]any) (any, error) {

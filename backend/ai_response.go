@@ -12,6 +12,10 @@ import (
 )
 
 func (a *App) executeAIRequestWithProgress(model AIModelConfig, endpoint string, body []byte, timeout int, limit int64, onProgress func(aiStreamProgress)) (aiExecutionResult, error) {
+	return a.executeAIRequestWithContext(nil, model, endpoint, body, timeout, limit, onProgress)
+}
+
+func (a *App) executeAIRequestWithContext(requestContext context.Context, model AIModelConfig, endpoint string, body []byte, timeout int, limit int64, onProgress func(aiStreamProgress)) (aiExecutionResult, error) {
 	model = withBuiltinDefaultAPIKey(model)
 	requestBody, err := applyAIResponseModeToRequestBody(body, model.ResponseMode)
 	if err != nil {
@@ -27,9 +31,11 @@ func (a *App) executeAIRequestWithProgress(model AIModelConfig, endpoint string,
 		RequestBody: string(requestBody),
 	}
 
-	requestContext := a.ctx
 	if requestContext == nil {
-		requestContext = context.Background()
+		requestContext = a.ctx
+		if requestContext == nil {
+			requestContext = context.Background()
+		}
 	}
 
 	httpReq, err := http.NewRequestWithContext(

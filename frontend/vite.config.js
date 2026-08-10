@@ -12,8 +12,10 @@ export default defineConfig({
   },
   server: {
     watch: {
-      ignored: ['**/wails/**']
-    }
+      // Wails regenerates these bridge files during development. They remain
+      // importable, but must not participate in Vite's HMR file watcher.
+      ignored: ["**/wailsjs/**"],
+    },
   },
   build: {
     rollupOptions: {

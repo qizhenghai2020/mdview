@@ -103,7 +103,9 @@ function findFileMatches(content, file, searchTerm, { matchCase, wholeWord }) {
         fileName: file.name,
         line: lineIndex + 1,
         column: matchIndex + 1,
+        matchText: lineText.slice(matchIndex, matchIndex + searchTerm.length),
         matchLength: searchTerm.length,
+        matchOrdinal: matches.length,
         ...preview,
       });
 

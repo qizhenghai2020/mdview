@@ -4,11 +4,19 @@ import {backend} from '../models';
 
 export function BuildFileWorkspace(arg1:Array<string>):Promise<backend.FileWorkspace>;
 
+export function CancelPptGeneration(arg1:string):Promise<void>;
+
 export function DeleteDesignDraft(arg1:string):Promise<void>;
+
+export function DeletePptArtifact(arg1:string):Promise<void>;
+
+export function DeletePptGenerationJob(arg1:string):Promise<void>;
 
 export function FormatMarkdownWithAI(arg1:backend.AIFormatRequest):Promise<string>;
 
 export function GenerateContentWithAI(arg1:backend.AIGenerateContentRequest):Promise<string>;
+
+export function GeneratePresentationWithAI(arg1:backend.AIPresentationRequest):Promise<string>;
 
 export function GenerateThemeWithAI(arg1:backend.AIThemeRequest):Promise<string>;
 
@@ -24,6 +32,12 @@ export function GetFileName():Promise<string>;
 
 export function GetFilePath():Promise<string>;
 
+export function GetPptArtifact(arg1:string):Promise<backend.PptArtifactRecord>;
+
+export function GetPptArtifactEditorURL(arg1:string,arg2:number):Promise<string>;
+
+export function GetPptGenerationJob(arg1:string):Promise<backend.PptGenerationJobRecord>;
+
 export function GetStartupFile():Promise<string>;
 
 export function GetStartupMode():Promise<string>;
@@ -31,6 +45,8 @@ export function GetStartupMode():Promise<string>;
 export function IsFileAssociationSet():Promise<boolean>;
 
 export function ListExternalFonts():Promise<Array<backend.ExternalFontInfo>>;
+
+export function ListImageFiles(arg1:string):Promise<Array<string>>;
 
 export function OpenDesignExportWindow(arg1:string,arg2:string):Promise<void>;
 
@@ -40,6 +56,8 @@ export function OpenFileDialog():Promise<string>;
 
 export function OpenFilesDialog():Promise<Array<string>>;
 
+export function OpenImageFilesDialog():Promise<Array<string>>;
+
 export function ReadFile(arg1:string):Promise<string>;
 
 export function ReadFileAndUpdateWatch(arg1:string):Promise<string>;
@@ -48,9 +66,13 @@ export function ReadImageAsBase64(arg1:string):Promise<string>;
 
 export function ReadTextFileContent(arg1:string):Promise<string>;
 
+export function RegeneratePresentationSlideWithAI(arg1:backend.AIPresentationSlideRequest):Promise<string>;
+
 export function RegisterFileAssociation():Promise<void>;
 
 export function ResolveImagePath(arg1:string):Promise<string>;
+
+export function ResumePptGeneration(arg1:backend.AIPresentationGenerationRequest):Promise<backend.PptGenerationJobRecord>;
 
 export function SaveDesignDraft(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -58,11 +80,17 @@ export function SaveExportFileDialog(arg1:string,arg2:string,arg3:string):Promis
 
 export function SaveFileDialog(arg1:string):Promise<string>;
 
+export function SavePptArtifact(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function SavePptArtifactVolume(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number,arg6:string):Promise<void>;
+
 export function SetDesignExportStartupArg(arg1:string):Promise<void>;
 
 export function SetStartupArg(arg1:string):Promise<void>;
 
 export function StartFileWatch():Promise<void>;
+
+export function StartPptGeneration(arg1:backend.AIPresentationGenerationRequest):Promise<backend.PptGenerationJobRecord>;
 
 export function StopFileWatch():Promise<void>;
 

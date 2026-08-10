@@ -9,8 +9,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+const (
+	maxPptReferenceImages     = 8
+	maxPptReferenceImageBytes = 4 * 1024 * 1024
 )
 
 // ReadImageAsBase64 reads a local or remote image resource and returns it as a base64 data URI.
@@ -36,6 +44,120 @@ func (a *App) ReadImageAsBase64(imagePath string) string {
 	}
 
 	return fmt.Sprintf("data:%s;base64,%s", mimeType, encodeBase64(data))
+}
+
+func attachReferenceImages(requestContext aiRequestContext) (aiRequestContext, error) {
+	if len(requestContext.ReferenceImages) == 0 {
+		return requestContext, nil
+	}
+	dataURLs, err := readReferenceImageDataURLs(requestContext.ReferenceImages)
+	if err != nil {
+		return requestContext, err
+	}
+	requestContext.ReferenceImages = nil
+	requestContext.Messages = append([]chatCompletionMessage(nil), requestContext.Messages...)
+	lastUser := -1
+	for index := range requestContext.Messages {
+		if strings.EqualFold(requestContext.Messages[index].Role, "user") {
+			lastUser = index
+		}
+	}
+	if lastUser < 0 {
+		requestContext.Messages = append(requestContext.Messages, chatCompletionMessage{Role: "user"})
+		lastUser = len(requestContext.Messages) - 1
+	}
+	requestContext.Messages[lastUser].ImageDataURLs = dataURLs
+	return requestContext, nil
+}
+
+func readReferenceImageDataURLs(paths []string) ([]string, error) {
+	if len(paths) > maxPptReferenceImages {
+		return nil, fmt.Errorf("参考图最多支持 %d 张", maxPptReferenceImages)
+	}
+	result := make([]string, 0, len(paths))
+	seen := make(map[string]bool)
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		if strings.HasPrefix(strings.ToLower(path), "data:image/") {
+			result = append(result, path)
+			continue
+		}
+		if isRemoteImageResource(path) {
+			result = append(result, path)
+			continue
+		}
+		data, mimeType, err := readLocalImageResource(path)
+		if err != nil {
+			return nil, fmt.Errorf("读取参考图失败（%s）：%w", filepath.Base(path), err)
+		}
+		if int64(len(data)) > maxPptReferenceImageBytes {
+			return nil, fmt.Errorf("参考图过大（%s），单张不能超过 %d MB", filepath.Base(path), maxPptReferenceImageBytes/(1024*1024))
+		}
+		result = append(result, fmt.Sprintf("data:%s;base64,%s", mimeType, encodeBase64(data)))
+	}
+	return result, nil
+}
+
+func (a *App) OpenImageFilesDialog() []string {
+	paths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   "选择参考图片",
+		Filters: imageFileDialogFilters(),
+	})
+	if err != nil {
+		return nil
+	}
+	return paths
+}
+
+func (a *App) ListImageFiles(directory string) []string {
+	root := strings.TrimSpace(directory)
+	if root == "" {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	paths := make([]string, 0)
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if isSupportedImagePath(path) {
+			paths = append(paths, path)
+			if len(paths) >= maxPptReferenceImages {
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	sort.SliceStable(paths, func(left, right int) bool {
+		return strings.ToLower(paths[left]) < strings.ToLower(paths[right])
+	})
+	return paths
+}
+
+func isSupportedImagePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico", ".avif":
+		return true
+	default:
+		return false
+	}
+}
+
+func imageFileDialogFilters() []runtime.FileFilter {
+	return []runtime.FileFilter{
+		{DisplayName: "常规图片", Pattern: "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.svg;*.ico;*.avif"},
+		{DisplayName: "所有文件", Pattern: "*.*"},
+	}
 }
 
 func isRemoteImageResource(resource string) bool {

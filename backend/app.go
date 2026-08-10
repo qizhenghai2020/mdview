@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"sync"
 	"time"
@@ -17,11 +18,13 @@ type App struct {
 	startupMode     string
 	designExportArg string
 	designDraftDir  string
+	pptArtifactDir  string
 	lastModTime     time.Time
 	lastFileSize    int64
 	lastFileHash    [sha256.Size]byte
 	watchCancel     context.CancelFunc
 	watchGeneration uint64
+	pptJobs         map[string]*pptGenerationRuntime
 	mu              sync.Mutex
 }
 
@@ -64,24 +67,110 @@ type AIGenerateContentRequest struct {
 	Model    AIModelConfig `json:"model"`
 }
 
+type AIPresentationRequest struct {
+	Markdown      string        `json:"markdown"`
+	AssetManifest string        `json:"assetManifest,omitempty"`
+	Instruction   string        `json:"instruction,omitempty"`
+	Model         AIModelConfig `json:"model"`
+}
+
+type AIPresentationSlideRequest struct {
+	Slide           map[string]any `json:"slide"`
+	Context         map[string]any `json:"context,omitempty"`
+	Instruction     string         `json:"instruction,omitempty"`
+	ReferenceImages []string       `json:"referenceImages,omitempty"`
+	Model           AIModelConfig  `json:"model"`
+}
+
 type AIFormatProgressEvent struct {
-	Kind          string `json:"kind"`
-	Stage         string `json:"stage"`
-	Message       string `json:"message"`
-	Detail        string `json:"detail,omitempty"`
-	Endpoint      string `json:"endpoint,omitempty"`
-	StatusCode    int    `json:"statusCode,omitempty"`
-	RequestBytes  int    `json:"requestBytes,omitempty"`
-	ResponseBytes int    `json:"responseBytes,omitempty"`
-	ContentChars  int    `json:"contentChars,omitempty"`
-	DeltaChars    int    `json:"deltaChars,omitempty"`
-	ContentPath   string `json:"contentPath,omitempty"`
-	ElapsedMs     int64  `json:"elapsedMs,omitempty"`
+	Kind            string `json:"kind"`
+	Stage           string `json:"stage"`
+	Message         string `json:"message"`
+	Detail          string `json:"detail,omitempty"`
+	Endpoint        string `json:"endpoint,omitempty"`
+	StatusCode      int    `json:"statusCode,omitempty"`
+	RequestBytes    int    `json:"requestBytes,omitempty"`
+	ResponseBytes   int    `json:"responseBytes,omitempty"`
+	ContentChars    int    `json:"contentChars,omitempty"`
+	DeltaChars      int    `json:"deltaChars,omitempty"`
+	ContentPath     string `json:"contentPath,omitempty"`
+	ElapsedMs       int64  `json:"elapsedMs,omitempty"`
+	JobID           string `json:"jobId,omitempty"`
+	BatchID         string `json:"batchId,omitempty"`
+	VolumeIndex     int    `json:"volumeIndex,omitempty"`
+	CurrentSlide    int    `json:"currentSlide,omitempty"`
+	CompletedSlides int    `json:"completedSlides,omitempty"`
+	TotalSlides     int    `json:"totalSlides,omitempty"`
+	Attempt         int    `json:"attempt,omitempty"`
+	Retryable       bool   `json:"retryable,omitempty"`
 }
 
 type chatCompletionMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role          string   `json:"role"`
+	Content       string   `json:"-"`
+	ImageDataURLs []string `json:"-"`
+}
+
+func (message chatCompletionMessage) MarshalJSON() ([]byte, error) {
+	content := any(message.Content)
+	if len(message.ImageDataURLs) > 0 {
+		parts := make([]map[string]any, 0, len(message.ImageDataURLs)+1)
+		for _, imageURL := range message.ImageDataURLs {
+			if imageURL == "" {
+				continue
+			}
+			parts = append(parts, map[string]any{
+				"type": "image_url",
+				"image_url": map[string]any{
+					"url": imageURL,
+				},
+			})
+		}
+		if message.Content != "" {
+			parts = append(parts, map[string]any{"type": "text", "text": message.Content})
+		}
+		if len(parts) > 0 {
+			content = parts
+		}
+	}
+	return json.Marshal(struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}{Role: message.Role, Content: content})
+}
+
+func (message *chatCompletionMessage) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	message.Role = raw.Role
+	message.Content = ""
+	if len(raw.Content) == 0 || string(raw.Content) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(raw.Content, &message.Content); err == nil {
+		return nil
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw.Content, &parts); err != nil {
+		return err
+	}
+	for _, part := range parts {
+		if part.Type == "text" && part.Text != "" {
+			if message.Content != "" {
+				message.Content += "\n"
+			}
+			message.Content += part.Text
+		}
+	}
+	return nil
 }
 
 type chatCompletionRequest struct {
@@ -125,6 +214,24 @@ type DesignDraftRecord struct {
 	FileName   string `json:"fileName"`
 	HTML       string `json:"html"`
 	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+type PptArtifactRecord struct {
+	SourcePath    string                    `json:"sourcePath"`
+	SourceHash    string                    `json:"sourceHash"`
+	FileName      string                    `json:"fileName"`
+	HTML          string                    `json:"html"`
+	UpdatedAt     int64                     `json:"updatedAt"`
+	ShellVersion  string                    `json:"shellVersion"`
+	PromptVersion string                    `json:"promptVersion"`
+	Volumes       []PptArtifactVolumeRecord `json:"volumes,omitempty"`
+}
+
+type PptArtifactVolumeRecord struct {
+	Index     int    `json:"index"`
+	FileName  string `json:"fileName"`
+	HTML      string `json:"html"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type designDraftMetaRecord struct {
@@ -178,7 +285,7 @@ var ignoredWorkspaceDirectories = map[string]struct{}{
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{pptJobs: make(map[string]*pptGenerationRuntime)}
 }
 
 func StartupHandler(app *App) func(context.Context) {
@@ -208,6 +315,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.StopFileWatch()
+	a.cancelAllPptGenerationJobs()
 	a.cleanupDesignSessionArtifacts()
 }
 
@@ -226,5 +334,5 @@ func (a *App) GetDesignExportPayloadPath() string {
 
 // GetAppVersion returns the application version
 func (a *App) GetAppVersion() string {
-	return "1.0.3"
+	return "1.0.4"
 }

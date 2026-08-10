@@ -3656,10 +3656,12 @@ body.theme-radius-flat *::after {
 .app-container.theme-radius-flat .loading-spinner,
 .app-container.theme-radius-flat .loading-spinner-sm,
 .app-container.theme-radius-flat .theme-spinner,
+.app-container.theme-radius-flat .ppt-spinner,
 body.theme-radius-flat .loading-spinner-large,
 body.theme-radius-flat .loading-spinner,
 body.theme-radius-flat .loading-spinner-sm,
-body.theme-radius-flat .theme-spinner {
+body.theme-radius-flat .theme-spinner,
+body.theme-radius-flat .ppt-spinner {
   border-radius: 999px !important;
 }
 

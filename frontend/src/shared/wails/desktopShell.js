@@ -2,6 +2,7 @@ import { createAiClient } from "@/shared/ai/client";
 import { createWailsBridge, isWailsEnv, waitForWailsReady } from "@/shared/wails/appBridge";
 import { createFileShellClient } from "@/shared/wails/fileShell";
 import { createResourceShellClient } from "@/shared/wails/resourceShell";
+import { createPptArtifactShell } from "@/shared/wails/pptArtifactShell";
 import { createSessionShellClient } from "@/shared/wails/sessionShell";
 import { createWindowShellClient } from "@/shared/wails/windowShell";
 
@@ -13,6 +14,13 @@ export function createDesktopShell() {
     formatDocument: app.FormatMarkdownWithAI,
     generateTheme: app.GenerateThemeWithAI,
     generateContent: app.GenerateContentWithAI,
+    generatePresentation: app.GeneratePresentationWithAI,
+    regeneratePresentationSlide: app.RegeneratePresentationSlideWithAI,
+    startPresentationGeneration: app.StartPptGeneration,
+    resumePresentationGeneration: app.ResumePptGeneration,
+    getPresentationGeneration: app.GetPptGenerationJob,
+    cancelPresentationGeneration: app.CancelPptGeneration,
+    deletePresentationGeneration: app.DeletePptGenerationJob,
     eventsOn: runtime.EventsOn,
     eventsOff: runtime.EventsOff,
   });
@@ -21,6 +29,8 @@ export function createDesktopShell() {
     isAvailable: isWailsEnv,
     openFileDialog: app.OpenFileDialog,
     openFilesDialog: app.OpenFilesDialog,
+    openImageFilesDialog: app.OpenImageFilesDialog,
+    listImageFiles: app.ListImageFiles,
     openDirectoryDialog: app.OpenDirectoryDialog,
     buildFileWorkspace: app.BuildFileWorkspace,
     readFile: app.ReadFile,
@@ -42,6 +52,15 @@ export function createDesktopShell() {
     deleteDesignDraft: app.DeleteDesignDraft,
   });
 
+  const pptArtifactShell = createPptArtifactShell({
+    isAvailable: isWailsEnv,
+    getArtifact: app.GetPptArtifact,
+    getEditorURL: app.GetPptArtifactEditorURL,
+    saveArtifact: app.SavePptArtifact,
+    saveArtifactVolume: app.SavePptArtifactVolume,
+    deleteArtifact: app.DeletePptArtifact,
+  });
+
   const sessionShell = createSessionShellClient({
     isAvailable: isWailsEnv,
     getStartupFile: app.GetStartupFile,
@@ -56,6 +75,9 @@ export function createDesktopShell() {
     isAvailable: isWailsEnv,
     windowIsMaximised: runtime.WindowIsMaximised,
     windowMinimise: runtime.WindowMinimise,
+    windowFullscreen: runtime.WindowFullscreen,
+    windowUnfullscreen: runtime.WindowUnfullscreen,
+    windowIsFullscreen: runtime.WindowIsFullscreen,
     windowToggleMaximise: runtime.WindowToggleMaximise,
     windowSetDarkTheme: runtime.WindowSetDarkTheme,
     windowSetLightTheme: runtime.WindowSetLightTheme,
@@ -70,6 +92,7 @@ export function createDesktopShell() {
     aiClient,
     fileShell,
     resourceShell,
+    pptArtifactShell,
     sessionShell,
     windowShell,
   };

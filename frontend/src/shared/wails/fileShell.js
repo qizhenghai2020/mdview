@@ -16,6 +16,8 @@ export function createFileShellClient({
   isAvailable = false,
   openFileDialog,
   openFilesDialog,
+  openImageFilesDialog,
+  listImageFiles,
   openDirectoryDialog,
   buildFileWorkspace,
   readFile,
@@ -29,6 +31,11 @@ export function createFileShellClient({
     createRejectedValue("请在桌面应用中使用此功能")
   );
   const requestOpenFilesDialog = typeof openFilesDialog === "function" ? openFilesDialog : null;
+  const requestOpenImageFilesDialog = pickFunction(
+    openImageFilesDialog,
+    createResolvedValue([])
+  );
+  const requestListImageFiles = pickFunction(listImageFiles, createResolvedValue([]));
   const requestOpenDirectoryDialog = pickFunction(
     openDirectoryDialog,
     createRejectedValue("请在桌面应用中使用此功能")
@@ -63,6 +70,12 @@ export function createFileShellClient({
     },
     openDirectory() {
       return requestOpenDirectoryDialog();
+    },
+    openImageFiles() {
+      return requestOpenImageFilesDialog();
+    },
+    listImageFiles(directory) {
+      return requestListImageFiles(directory);
     },
     buildWorkspace(paths) {
       return requestBuildFileWorkspace(normalizePathList(paths));

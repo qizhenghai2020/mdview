@@ -6,8 +6,20 @@ export function BuildFileWorkspace(arg1) {
   return window['go']['backend']['App']['BuildFileWorkspace'](arg1);
 }
 
+export function CancelPptGeneration(arg1) {
+  return window['go']['backend']['App']['CancelPptGeneration'](arg1);
+}
+
 export function DeleteDesignDraft(arg1) {
   return window['go']['backend']['App']['DeleteDesignDraft'](arg1);
+}
+
+export function DeletePptArtifact(arg1) {
+  return window['go']['backend']['App']['DeletePptArtifact'](arg1);
+}
+
+export function DeletePptGenerationJob(arg1) {
+  return window['go']['backend']['App']['DeletePptGenerationJob'](arg1);
 }
 
 export function FormatMarkdownWithAI(arg1) {
@@ -16,6 +28,10 @@ export function FormatMarkdownWithAI(arg1) {
 
 export function GenerateContentWithAI(arg1) {
   return window['go']['backend']['App']['GenerateContentWithAI'](arg1);
+}
+
+export function GeneratePresentationWithAI(arg1) {
+  return window['go']['backend']['App']['GeneratePresentationWithAI'](arg1);
 }
 
 export function GenerateThemeWithAI(arg1) {
@@ -46,6 +62,18 @@ export function GetFilePath() {
   return window['go']['backend']['App']['GetFilePath']();
 }
 
+export function GetPptArtifact(arg1) {
+  return window['go']['backend']['App']['GetPptArtifact'](arg1);
+}
+
+export function GetPptArtifactEditorURL(arg1, arg2) {
+  return window['go']['backend']['App']['GetPptArtifactEditorURL'](arg1, arg2);
+}
+
+export function GetPptGenerationJob(arg1) {
+  return window['go']['backend']['App']['GetPptGenerationJob'](arg1);
+}
+
 export function GetStartupFile() {
   return window['go']['backend']['App']['GetStartupFile']();
 }
@@ -60,6 +88,10 @@ export function IsFileAssociationSet() {
 
 export function ListExternalFonts() {
   return window['go']['backend']['App']['ListExternalFonts']();
+}
+
+export function ListImageFiles(arg1) {
+  return window['go']['backend']['App']['ListImageFiles'](arg1);
 }
 
 export function OpenDesignExportWindow(arg1, arg2) {
@@ -78,6 +110,10 @@ export function OpenFilesDialog() {
   return window['go']['backend']['App']['OpenFilesDialog']();
 }
 
+export function OpenImageFilesDialog() {
+  return window['go']['backend']['App']['OpenImageFilesDialog']();
+}
+
 export function ReadFile(arg1) {
   return window['go']['backend']['App']['ReadFile'](arg1);
 }
@@ -94,12 +130,20 @@ export function ReadTextFileContent(arg1) {
   return window['go']['backend']['App']['ReadTextFileContent'](arg1);
 }
 
+export function RegeneratePresentationSlideWithAI(arg1) {
+  return window['go']['backend']['App']['RegeneratePresentationSlideWithAI'](arg1);
+}
+
 export function RegisterFileAssociation() {
   return window['go']['backend']['App']['RegisterFileAssociation']();
 }
 
 export function ResolveImagePath(arg1) {
   return window['go']['backend']['App']['ResolveImagePath'](arg1);
+}
+
+export function ResumePptGeneration(arg1) {
+  return window['go']['backend']['App']['ResumePptGeneration'](arg1);
 }
 
 export function SaveDesignDraft(arg1, arg2, arg3) {
@@ -114,6 +158,14 @@ export function SaveFileDialog(arg1) {
   return window['go']['backend']['App']['SaveFileDialog'](arg1);
 }
 
+export function SavePptArtifact(arg1, arg2, arg3, arg4) {
+  return window['go']['backend']['App']['SavePptArtifact'](arg1, arg2, arg3, arg4);
+}
+
+export function SavePptArtifactVolume(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['backend']['App']['SavePptArtifactVolume'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function SetDesignExportStartupArg(arg1) {
   return window['go']['backend']['App']['SetDesignExportStartupArg'](arg1);
 }
@@ -124,6 +176,10 @@ export function SetStartupArg(arg1) {
 
 export function StartFileWatch() {
   return window['go']['backend']['App']['StartFileWatch']();
+}
+
+export function StartPptGeneration(arg1) {
+  return window['go']['backend']['App']['StartPptGeneration'](arg1);
 }
 
 export function StopFileWatch() {

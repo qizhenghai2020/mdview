@@ -609,7 +609,7 @@
               <dl class="about-details">
                 <div class="about-detail-row">
                   <dt>版本</dt>
-                  <dd>v1.0.3</dd>
+                  <dd>v1.0.4</dd>
                 </div>
                 <div class="about-detail-row">
                   <dt>作者</dt>

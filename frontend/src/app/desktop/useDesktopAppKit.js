@@ -22,11 +22,15 @@ function createViewBindings(desktop) {
   return {
     showNativeWindowControls: desktop.isWailsEnv,
     startupContextReadyDefault: !desktop.isWailsEnv,
+    aiClient: desktop.aiBridge,
+    fileShell: desktop.fileShell,
     imageResolverBindings,
     settingsModalBindings,
     readTextFileContent(path) {
       return desktop.resourceShell?.readTextFileContent?.(path) || Promise.resolve("");
     },
+    pptArtifactShell: desktop.pptArtifactShell,
+    windowShell: desktop.windowShell,
     setWindowTitle(title) {
       desktop.windowShell?.setTitle?.(title);
     },

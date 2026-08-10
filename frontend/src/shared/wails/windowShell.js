@@ -27,6 +27,9 @@ export function createWindowShellClient({
   isAvailable = false,
   windowIsMaximised,
   windowMinimise,
+  windowFullscreen,
+  windowUnfullscreen,
+  windowIsFullscreen,
   windowToggleMaximise,
   windowSetDarkTheme,
   windowSetLightTheme,
@@ -37,6 +40,9 @@ export function createWindowShellClient({
   const available = isAvailable === true;
   const requestWindowIsMaximised = pickFunction(windowIsMaximised, createResolvedValue(false));
   const requestWindowMinimise = pickFunction(windowMinimise, noop);
+  const requestWindowFullscreen = pickFunction(windowFullscreen, noop);
+  const requestWindowUnfullscreen = pickFunction(windowUnfullscreen, noop);
+  const requestWindowIsFullscreen = pickFunction(windowIsFullscreen, createResolvedValue(false));
   const requestWindowToggleMaximise = pickFunction(windowToggleMaximise, noop);
   const requestWindowSetDarkTheme = pickFunction(windowSetDarkTheme, noop);
   const requestWindowSetLightTheme = pickFunction(windowSetLightTheme, noop);
@@ -48,6 +54,15 @@ export function createWindowShellClient({
     available,
     isMaximized() {
       return requestWindowIsMaximised();
+    },
+    enterFullscreen() {
+      requestWindowFullscreen();
+    },
+    exitFullscreen() {
+      requestWindowUnfullscreen();
+    },
+    isFullscreen() {
+      return requestWindowIsFullscreen();
     },
     minimize() {
       requestWindowMinimise();

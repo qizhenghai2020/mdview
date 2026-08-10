@@ -39,16 +39,17 @@ type AIModelTestResult struct {
 }
 
 type aiRequestContext struct {
-	Kind         string
-	ModelName    string
-	Temperature  float64
-	Messages     []chatCompletionMessage
-	SystemPrompt string
-	UserPrompt   string
-	Markdown     string
-	Instruction  string
-	Preference   string
-	CurrentTheme string
+	Kind            string
+	ModelName       string
+	Temperature     float64
+	Messages        []chatCompletionMessage
+	SystemPrompt    string
+	UserPrompt      string
+	Markdown        string
+	Instruction     string
+	Preference      string
+	CurrentTheme    string
+	ReferenceImages []string
 }
 
 type aiExecutionResult struct {

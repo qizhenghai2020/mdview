@@ -2,13 +2,13 @@ package main
 
 import (
 	"embed"
-	"os"
-	"strings"
-	"mdviewer/backend"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	winoptions "github.com/wailsapp/wails/v2/pkg/options/windows"
+	"mdviewer/backend"
+	"os"
+	"strings"
 )
 
 //go:embed all:frontend/dist
@@ -49,13 +49,16 @@ func main() {
 	}
 
 	err := wails.Run(&options.App{
-		Title:            title,
-		Width:            width,
-		Height:           height,
-		MinWidth:         minWidth,
-		MinHeight:        minHeight,
-		Frameless:        true,
-		AssetServer:      &assetserver.Options{Assets: assets},
+		Title:     title,
+		Width:     width,
+		Height:    height,
+		MinWidth:  minWidth,
+		MinHeight: minHeight,
+		Frameless: true,
+		AssetServer: &assetserver.Options{
+			Assets:  assets,
+			Handler: backend.PptArtifactAssetHandler(app),
+		},
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 255},
 		Windows: &winoptions.Options{
 			Theme:                             winoptions.SystemDefault,

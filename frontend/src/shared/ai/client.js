@@ -11,6 +11,13 @@ export function createAiClient({
   formatDocument,
   generateTheme,
   generateContent,
+  generatePresentation,
+  regeneratePresentationSlide,
+  startPresentationGeneration,
+  resumePresentationGeneration,
+  getPresentationGeneration,
+  cancelPresentationGeneration,
+  deletePresentationGeneration,
   eventsOn,
   eventsOff,
 } = {}) {
@@ -18,6 +25,12 @@ export function createAiClient({
   const supportsFormatDocument = typeof formatDocument === "function";
   const supportsGenerateTheme = typeof generateTheme === "function";
   const supportsGenerateContent = typeof generateContent === "function";
+  const supportsGeneratePresentation = typeof generatePresentation === "function";
+  const supportsRegeneratePresentationSlide = typeof regeneratePresentationSlide === "function";
+  const supportsIncrementalPresentation =
+    typeof startPresentationGeneration === "function" &&
+    typeof resumePresentationGeneration === "function" &&
+    typeof getPresentationGeneration === "function";
   const supportsProgressSubscription =
     typeof eventsOn === "function" && typeof eventsOff === "function";
   const capabilities = Object.freeze({
@@ -25,6 +38,9 @@ export function createAiClient({
     formatDocument: supportsFormatDocument,
     generateTheme: supportsGenerateTheme,
     generateContent: supportsGenerateContent,
+    generatePresentation: supportsGeneratePresentation,
+    presentationSlide: supportsRegeneratePresentationSlide,
+    incrementalPresentation: supportsIncrementalPresentation,
     progressSubscription: supportsProgressSubscription,
   });
 
@@ -44,6 +60,24 @@ export function createAiClient({
     generateContent,
     createUnavailableHandler("请在桌面应用中生成内容")
   );
+  const requestGeneratePresentation = pickHandler(
+    generatePresentation,
+    createUnavailableHandler("当前环境不支持 PPT 生成")
+  );
+  const requestStartPresentationGeneration = pickHandler(
+    startPresentationGeneration,
+    createUnavailableHandler("当前环境不支持增量 PPT 生成")
+  );
+  const requestResumePresentationGeneration = pickHandler(
+    resumePresentationGeneration,
+    createUnavailableHandler("当前环境不支持继续 PPT 生成")
+  );
+  const requestGetPresentationGeneration = pickHandler(
+    getPresentationGeneration,
+    createUnavailableHandler("当前环境不支持读取 PPT 生成任务")
+  );
+  const requestCancelPresentationGeneration = pickHandler(cancelPresentationGeneration, noop);
+  const requestDeletePresentationGeneration = pickHandler(deletePresentationGeneration, noop);
   const requestEventsOn = pickHandler(eventsOn, noop);
   const requestEventsOff = pickHandler(eventsOff, noop);
 
@@ -53,6 +87,9 @@ export function createAiClient({
       supportsFormatDocument ||
       supportsGenerateTheme ||
       supportsGenerateContent ||
+      supportsGeneratePresentation ||
+      supportsRegeneratePresentationSlide ||
+      supportsIncrementalPresentation ||
       supportsProgressSubscription,
     capabilities,
     supports(capability) {
@@ -78,6 +115,43 @@ export function createAiClient({
         ...request,
         model: buildAIModelPayload(request?.model),
       });
+    },
+    generatePresentation(request = {}) {
+      return requestGeneratePresentation({
+        ...request,
+        model: buildAIModelPayload(request?.model),
+      });
+    },
+    regeneratePresentationSlide(request = {}) {
+      const requestHandler = pickHandler(
+        regeneratePresentationSlide,
+        createUnavailableHandler("当前环境不支持 AI 单页重新生成")
+      );
+      return requestHandler({
+        ...request,
+        model: buildAIModelPayload(request?.model),
+      });
+    },
+    startPresentationGeneration(request = {}) {
+      return requestStartPresentationGeneration({
+        ...request,
+        model: buildAIModelPayload(request?.model),
+      });
+    },
+    resumePresentationGeneration(request = {}) {
+      return requestResumePresentationGeneration({
+        ...request,
+        model: buildAIModelPayload(request?.model),
+      });
+    },
+    getPresentationGeneration(sourcePath) {
+      return requestGetPresentationGeneration(sourcePath);
+    },
+    cancelPresentationGeneration(sourcePath) {
+      return requestCancelPresentationGeneration(sourcePath);
+    },
+    deletePresentationGeneration(sourcePath) {
+      return requestDeletePresentationGeneration(sourcePath);
     },
     subscribeProgress(handler) {
       if (typeof handler !== "function") {
